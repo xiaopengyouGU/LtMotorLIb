@@ -49,7 +49,7 @@ rt_err_t lt_motor_set_pwm(lt_motor_t motor, rt_uint16_t pwm_num,rt_uint8_t pwm_c
 	
 	if(_pwm != RT_NULL)
 	{
-		rt_pwm_set(_pwm,pwm_channel,PWM_PERIOD,0);
+		rt_pwm_set(_pwm,pwm_channel,MOTOR_PERIOD,0);
 	}
 	else return RT_ERROR;
 	
@@ -130,33 +130,7 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 	RT_ASSERT(motor->ops != RT_NULL);
 	RT_ASSERT(motor->ops->control != RT_NULL);
 	
-	switch(cmd)
-	{
-		case MOTOR_CTRL_OUTPUT:
-		{
-			return 	motor->ops->control(motor,MOTOR_CTRL_OUTPUT,arg);
-		}
-		case MOTOR_CTRL_OUTPUT_ANGLE:
-		{
-			return motor->ops->control(motor,MOTOR_CTRL_OUTPUT_ANGLE,arg);
-		}
-		case MOTOR_CTRL_MEASURE_SPEED:
-		{
-			return	motor->ops->control(motor,MOTOR_CTRL_MEASURE_SPEED,arg);
-		}
-		case MOTOR_CTRL_MEASURE_POSITION:
-		{
-			return motor->ops->control(motor,MOTOR_CTRL_MEASURE_POSITION,arg);
-		}
-		default:
-		{
-			motor->ops->control(motor,cmd,arg);
-			break;
-		}
-	}
-	
-	return RT_EOK;
-	
+	return motor->ops->control(motor,cmd,arg);
 }
 
 rt_err_t lt_motor_set_ops(lt_motor_t motor, struct lt_motor_ops * ops)

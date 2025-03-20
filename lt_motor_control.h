@@ -61,6 +61,12 @@ float lt_pid_incre_control(lt_pid_t pid, float curr_val);
 #define PWM_CHANNEL_3 0x03
 #define PWM_CHANNEL_4 0x04
 
+/* motor status */
+#define MOTOR_STATUS_RUN				0x00
+#define MOTOR_STATUS_STOP				0x01
+#define MOTOR_STATUS_ACCELERATE			0x02
+#define MOTOR_STATUS_DECELERATE			0x03
+
 /* motor control command */
 #define MOTOR_CTRL_OUTPUT				0x01
 #define MOTOR_CTRL_OUTPUT_ANGLE			0x02
@@ -87,6 +93,7 @@ struct lt_motor_object{
 //	float target_position;
 	rt_int32_t encoder_count;			/* prev encoder number */	
 	rt_uint8_t type;
+	rt_uint8_t status;					/* motor status */
 	const struct lt_motor_ops *ops;		/* motor control operators */
 	void* user_data;					
 };
@@ -112,6 +119,66 @@ float lt_motor_measure_position(lt_motor_t);
 rt_err_t lt_motor_control(lt_motor_t, int cmd, void* arg);
 
 /*******************************************************************************/
+/* stepper motor part */
+
+#define STEPPER_CTRL_OUTPUT					MOTOR_CTRL_OUTPUT
+#define STEPPER_CTRL_OUTPUT_ANGLE			MOTOR_CTRL_OUTPUT_ANGLE
+#define STEPPER_CTRL_MEASURE_SPEED			MOTOR_CTRL_MEASURE_SPEED
+#define STEPPER_CTRL_MEASURE_POSITION		MOTOR_CTRL_MEASURE_POSITION
+/* basic control commanda are the same */
+#define STEPPER_CTRL_CONFIG					(MOTOR_CTRL_MEASURE_POSITION + 0x10)
+#define STEPPER_CTRL_ENABLE					(MOTOR_CTRL_MEASURE_POSITION + 0x11)
+#define STEPPER_CTRL_DISABLE				(MOTOR_CTRL_MEASURE_POSITION + 0x12)
+#define STEPPER_CTRL_TRAPZOID_ACCELERATE	(MOTOR_CTRL_MEASURE_POSITION + 0x13)
+#define STEPPER_CTRL_S_CURVE_ACCELERATE		(MOTOR_CTRL_MEASURE_POSITION + 0x14)
+#define STEPPER_CTRL_LINE_INTERPOLATION		(MOTOR_CTRL_MEASURE_POSITION + 0x15)
+#define STEPPER_CTRL_CIRCULAR_INTERPOLATION	(MOTOR_CTRL_MEASURE_POSITION + 0x16)
+
+#define TIMER_NUM_1 0x01
+#define TIMER_NUM_2 0x02
+#define TIMER_NUM_3 0x03
+#define TIMER_NUM_4 0x04
+#define TIMER_NUM_5 0x05
+
+struct lt_motor_stepper_object
+{
+	struct lt_motor_object parent;
+	
+	rt_ubase_t enable_pin;		/* enable pin */
+	rt_uint8_t config_flag;		/* config flag */
+	rt_uint16_t period;			/* pulse period ms */
+	float subdivide;			/* stepper angle subdivide */
+	float stepper_angle;
+	rt_timer_t soft_timer;		/* inner software timer of stepper motor */
+	rt_uint32_t *accel_series;	/* accelerate series */
+	rt_uint16_t index,max_index;/* series index */
+	
+	rt_device_t hw_timer;		/* hardware timer */
+};
+typedef struct lt_motor_stepper_object * lt_stepper_t;
+
+struct lt_stepper_config
+{
+	rt_uint32_t enable_pin;		/* enable pin */
+	rt_uint16_t period;			/* pulse period  ms */
+	float stepper_angle;		/* unit: degree */
+	float subdivide;			/* subdivide number */
+	rt_uint8_t timer_num;		/* hardware timer num */
+};
+
+struct lt_stepper_config_accel
+{
+	int step;					/* +: forward, -: reversal */
+	rt_uint16_t accel;		/* accelerarte, norminal value = 100 * actual value */
+	rt_uint16_t decel;		/* decelerate, unit : 0.1rad/sec^2*/
+	rt_uint16_t speed;		/* speed, unit : 0.1 rad/sec */
+};
+
+struct lt_stepper_config_interp
+{
+	
+};
+
 
 /*******************************************************************************/
 struct lt_filter_object

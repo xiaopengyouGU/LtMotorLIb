@@ -2,18 +2,11 @@
 #include "protocol.h"
 #include "key.h"
 
-/* when communicating with upper computer, FINSH is forbidden */
-rt_align(RT_ALIGN_SIZE)	
-#ifndef RT_USING_FINSH
-static rt_thread_t process_t;
-#endif
 //test event 
-#define EVENT_KEY0	(1 << 3)
-#define EVENT_KEY_UP (1 << 5)
 #define FORWARD_PIN		GET_PIN(F,6)
 #define REVERSAL_PIN	GET_PIN(F,7)
 #define OUTPUT_CHANNEL	PWM_CHANNEL_4
-#define MEASURE_TIME	100	
+#define MEASURE_TIME	100		//20 for stepper motor
 
 #define TARGET_SPEED	120
 #define TARGET_POSITION 150
@@ -23,15 +16,48 @@ static rt_thread_t process_t;
 *  PWM --> PA3
 *  Encoder --> PB6 £¬ PB7
 */
+
+
+/* when communicating with upper computer, FINSH is forbidden */
+rt_align(RT_ALIGN_SIZE)	
+
 static rt_thread_t motor_t;
-static rt_thread_t key_thread;
-static rt_event_t key_event;
 static lt_pid_t motor_pid;
 static lt_motor_t motor;
 static rt_timer_t motor_timer;
 
 static lt_pid_t pos_pid;		/* position pid */
 static lt_pid_t vel_pid;		/* velocity pid */
+//test event 
+#define EVENT_KEY0	(1 << 3)
+#define EVENT_KEY_UP (1 << 5)
+static rt_thread_t key_thread;
+static rt_event_t key_event;
+
+static void key_thread_entry(void *parameter)
+{
+	rt_uint8_t key_val;
+	
+	while(1)
+	{
+		key_val = key_scan(0);
+		if(key_val == KEY0_PRES)
+		{
+			rt_kprintf("key thread: KEY0 pres\n");
+			rt_event_send(key_event,EVENT_KEY0);
+		}
+		if(key_val == KEY_UP_PRES)
+		{
+			rt_kprintf("key thread: KEY_UP pres\n");
+			rt_event_send(key_event,EVENT_KEY_UP);
+		}
+		rt_thread_mdelay(10);	//ÑÓÊ±
+	}
+}
+
+#ifndef RT_USING_FINSH
+static rt_thread_t process_t;
+#endif
 
 #ifdef RT_USING_FINSH
 static void motor_thread_entry(void *parameter)
@@ -57,28 +83,6 @@ static void motor_thread_entry(void *parameter)
 		rt_kprintf("event: %d, output: %.1f \n",event,output);
 		lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&output);
 	
-	}
-}
-
-
-static void key_thread_entry(void *parameter)
-{
-	rt_uint8_t key_val;
-	
-	while(1)
-	{
-		key_val = key_scan(0);
-		if(key_val == KEY0_PRES)
-		{
-			rt_kprintf("key thread: KEY0 pres\n");
-			rt_event_send(key_event,EVENT_KEY0);
-		}
-		if(key_val == KEY_UP_PRES)
-		{
-			rt_kprintf("key thread: KEY_UP pres\n");
-			rt_event_send(key_event,EVENT_KEY_UP);
-		}
-		rt_thread_mdelay(10);	//ÑÓÊ±
 	}
 }
 
@@ -284,4 +288,8 @@ void lt_motor_test(void)
 #endif
 }
 
-MSH_CMD_EXPORT(lt_motor_test, motor test);
+MSH_CMD_EXPORT(lt_motor_test, dc motor test);
+
+
+
+

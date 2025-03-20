@@ -1,5 +1,7 @@
 #include "lt_motor_control.h"
 
+static void _motor_dc_output(lt_motor_t, float input);
+static void _motor_dc_output_angle(lt_motor_t,float angle);
 
 static lt_motor_t _motor_dc_create(char* name,rt_uint8_t reduction_ration,rt_uint8_t type)
 {
@@ -10,7 +12,7 @@ static lt_motor_t _motor_dc_create(char* name,rt_uint8_t reduction_ration,rt_uin
 	
 	_motor->reduction_ratio = reduction_ration;
 	_motor->type = type;
-	
+	_motor->ops = &_motor_dc_ops;		/* set operators */
 	return _motor;
 }
 
@@ -61,55 +63,14 @@ static rt_err_t _motor_dc_control(lt_motor_t motor, int cmd, void*arg)
 	{
 		case MOTOR_CTRL_OUTPUT:
 		{
-			//struct rt_device_pwm* pwm = motor->pwm;
-			float input,output;
-			input = *(float *)arg;
-	
-			if(input > 0 )		/* forward rotation */
-			{
-				rt_pin_write(motor->forward_pin,PIN_HIGH);
-				rt_pin_write(motor->reversal_pin,PIN_LOW);
-			}
-			else if(input < 0)
-			{					/* reversal rotation */
-				input = -input;
-				rt_pin_write(motor->forward_pin,PIN_LOW);
-				rt_pin_write(motor->reversal_pin,PIN_HIGH);
-			}
-			else
-			{
-				rt_pin_write(motor->forward_pin,PIN_LOW);
-				rt_pin_write(motor->reversal_pin,PIN_LOW);
-			}
-
-			if(input > PWM_MAX_VAL)			/* actuator saturation */
-			{
-				output = PWM_MAX_VAL;
-			}
-			else if(input < PWM_MIN_VAL)	/* dead region */
-			{
-				output = 0;
-			}
-			else
-			{
-				output = input;
-			}
-			output = output*PWM_PERIOD/PWM_MAX_VAL;
-			rt_pwm_set(motor->pwm,motor->pwm_channel,PWM_PERIOD,(rt_uint32_t)(output));
-			//rt_pwm_set_pulse(motor->pwm,motor->pwm_channel,(rt_uint32_t)(output));
-			rt_pwm_enable(motor->pwm,motor->pwm_channel);
+			float input = *(float *)arg;
+			_motor_dc_output(motor,input);
 			break;
 		}
 		case MOTOR_CTRL_OUTPUT_ANGLE:
 		{
-			//struct rt_device_pwm* pwm = motor->pwm;
 			float angle = *(float *)arg;
-			if(angle < 0) angle = 0;
-			else if(angle >= MOTOR_MAX_ANGLE) angle = MOTOR_MAX_ANGLE;
-			/* transform angle to pulse */
-			angle = 500000+(angle/MOTOR_MAX_ANGLE)*2000000;		/* correspond to 0.5ms - 2.5ms */
-			rt_pwm_set(motor->pwm,motor->pwm_channel,20000000,(rt_uint32_t)angle);	/* period : 20ms */
-			rt_pwm_enable(motor->pwm,motor->pwm_channel);
+			_motor_dc_output_angle(motor,angle);
 			break;
 		}
 		case MOTOR_CTRL_MEASURE_SPEED:
@@ -137,3 +98,59 @@ struct lt_motor_ops _motor_dc_ops = {
 										_motor_dc_measure_speed,
 										_motor_dc_measure_position,
 									 };
+
+static void _motor_dc_output(lt_motor_t motor, float input)
+{
+	float output;
+	motor->status = MOTOR_STATUS_RUN;
+	if(input > 0 )		/* forward rotation */
+	{
+		rt_pin_write(motor->forward_pin,PIN_HIGH);
+		rt_pin_write(motor->reversal_pin,PIN_LOW);
+	}
+	else if(input < 0)
+	{					/* reversal rotation */
+		input = -input;
+		rt_pin_write(motor->forward_pin,PIN_LOW);
+		rt_pin_write(motor->reversal_pin,PIN_HIGH);
+	}
+	else
+	{
+		rt_pin_write(motor->forward_pin,PIN_LOW);
+		rt_pin_write(motor->reversal_pin,PIN_LOW);
+	}
+
+	if(input > MOTOR_MAX_SPEED)			/* actuator saturation */
+	{
+		output = MOTOR_MAX_SPEED;
+	}
+	else if(input < MOTOR_MIN_SPEED)	/* dead region */
+	{
+		output = 0;
+		motor->status = MOTOR_STATUS_STOP;
+	}
+	else
+	{
+		output = input;
+	}
+	output = output*MOTOR_PERIOD/MOTOR_MAX_VAL;
+	rt_pwm_set(motor->pwm,motor->pwm_channel,MOTOR_PERIOD,(rt_uint32_t)(output));
+	rt_pwm_enable(motor->pwm,motor->pwm_channel);
+}
+
+static void _motor_dc_output_angle(lt_motor_t motor,float angle)
+{
+	motor->status = MOTOR_STATUS_RUN;
+	if(angle < 0){
+		angle = 0;
+		motor->status = MOTOR_STATUS_STOP;
+	}
+	else if(angle >= MOTOR_MAX_ANGLE)
+	{
+		angle = MOTOR_MAX_ANGLE;
+	}
+	/* transform angle to pulse */
+	angle = MOTOR_ANGLE_BASE+(angle/MOTOR_MAX_ANGLE)*MOTOR_ANGLE_PERIOD;		/* correspond to 0.5ms - 2.5ms */
+	rt_pwm_set(motor->pwm,motor->pwm_channel,MOTOR_ANGLE_PERIOD,(rt_uint32_t)angle);	/* period : 20ms */
+	rt_pwm_enable(motor->pwm,motor->pwm_channel);
+}
