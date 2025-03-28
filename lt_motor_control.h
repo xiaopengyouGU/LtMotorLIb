@@ -140,6 +140,9 @@ rt_err_t lt_motor_control(lt_motor_t, int cmd, void* arg);
 #define TIMER_NUM_4 0x04
 #define TIMER_NUM_5 0x05
 
+#define STEPPER_INTERP_DIR_CW	1
+#define STEPPER_INTERP_DIR_CCW	-1
+
 struct lt_motor_stepper_object
 {
 	struct lt_motor_object parent;
@@ -147,7 +150,7 @@ struct lt_motor_stepper_object
 	rt_ubase_t enable_pin;		/* enable pin */
 	rt_uint8_t config_flag;		/* config flag */
 	rt_uint16_t period;			/* pulse period ms */
-	float subdivide;			/* stepper angle subdivide */
+	rt_uint16_t subdivide;		/* stepper angle subdivide */
 	float stepper_angle;
 	rt_timer_t soft_timer;		/* inner software timer of stepper motor */
 	rt_uint32_t *accel_series;	/* accelerate series */
@@ -162,21 +165,38 @@ struct lt_stepper_config
 	rt_uint32_t enable_pin;		/* enable pin */
 	rt_uint16_t period;			/* pulse period  ms */
 	float stepper_angle;		/* unit: degree */
-	float subdivide;			/* subdivide number */
+	rt_uint16_t subdivide;		/* subdivide number */
 	rt_uint8_t timer_num;		/* hardware timer num */
+	rt_uint32_t timer_freq;		/* hardware timer frequency */
 };
 
 struct lt_stepper_config_accel
 {
-	int step;					/* +: forward, -: reversal */
-	rt_uint16_t accel;		/* accelerarte, norminal value = 100 * actual value */
-	rt_uint16_t decel;		/* decelerate, unit : 0.1rad/sec^2*/
-	rt_uint16_t speed;		/* speed, unit : 0.1 rad/sec */
+	int step;				/* +: forward, -: reversal */
+	rt_uint16_t accel;		/* accelerarte, unit : rpm/m */
+	rt_uint16_t decel;		/* decelerate, unit : rpm/m */
+	rt_uint16_t speed;		/* speed, unit : rpm */
+	float freq_max;			/* max frequency */
+	float freq_min;			/* min frequency */
+	float flexible;			/* curve shape factor: flexible = 0 --> constant accel */
 };
 
 struct lt_stepper_config_interp
 {
-	
+	rt_int32_t x_start;
+	rt_int32_t y_start;
+	rt_int32_t x_end;
+	rt_int32_t y_end;
+	rt_int8_t dir;				/* interpolation direction, 1: clockwise, -1: counter-clockwise */
+	rt_uint32_t freq;
+	rt_uint32_t num_pulse;
+	lt_motor_t x_stepper;
+	lt_motor_t y_stepper;
+	rt_int32_t deviation;		/* position deviation */
+	rt_uint8_t curr_axis;		/* current axis */
+	rt_int8_t x_dir;			/* x move direction, 1: clockwise, -1: counter-clockwise */
+	rt_int8_t y_dir;			/* y move direction */
+	rt_uint8_t quadrant;			/* circular quadrant */
 };
 
 

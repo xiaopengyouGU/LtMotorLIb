@@ -12,6 +12,8 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper,float angle);
 static void _motor_stepper_output(lt_stepper_t stepper, float input);
 static void _motor_stepper_config(lt_stepper_t,struct lt_stepper_config* config);
 static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config);
+static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config);
+static void _motor_stepper_line_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config);
 //static rt_thread_t _process;			/* process thread for acceleration and  interplation */
 
 static lt_motor_t _motor_stepper_create(char* name,rt_uint8_t reduction_ration,rt_uint8_t type)
@@ -112,6 +114,12 @@ static rt_err_t _motor_stepper_control(lt_motor_t motor, int cmd, void*arg)
 			rt_pin_write(stepper->enable_pin,PIN_LOW);
 			rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);
 			stepper->parent.status = MOTOR_STATUS_STOP;
+			break;
+		}
+		case STEPPER_CTRL_TRAPZOID_ACCELERATE:
+		{
+			struct lt_stepper_config_accel* config = (struct lt_stepper_config_accel*)arg;
+			_motor_stepper_trapzoid_accelerate(stepper,config);
 			break;
 		}
 		default:break;
@@ -235,6 +243,8 @@ static void _motor_stepper_config(lt_stepper_t stepper,struct lt_stepper_config*
 	stepper->enable_pin = config->enable_pin;
 	stepper->config_flag = 1;								/* finish config */
 	rt_pin_mode(config->enable_pin,PIN_MODE_OUTPUT);		/* set enable pin */
+	if(stepper->subdivide == 0)
+		stepper->subdivide = 1;
 	/* config hardware timer */
 	rt_device_t _timer;
 	switch(config->timer_num)
@@ -260,6 +270,10 @@ static void _motor_stepper_config(lt_stepper_t stepper,struct lt_stepper_config*
 	if(_timer != RT_NULL)
 	{
 		stepper->hw_timer = _timer;
+		if(config->timer_freq >= 50000)		/* hwtimer's frequency must higher enough, eg: 50kHz */
+		{
+			rt_device_control(_timer,HWTIMER_CTRL_FREQ_SET,&(config->timer_freq));
+		}
 	}
 	/* default timer frequency: 1MHz */
 	
@@ -276,6 +290,7 @@ rt_err_t _hw_timer_callback_trapzoid(rt_device_t dev,rt_size_t size)
 		stepper->max_index = 0;
 		rt_device_close(stepper->hw_timer);		/* close hwtimer */
 		stepper->hw_timer->user_data = stepper->parent.user_data;		/* change user_data */
+		rt_free(stepper->accel_series);									/* release memory */
 	}
 	else
 	{
@@ -295,6 +310,7 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 {
 	if(!stepper->config_flag) return;				/* stepper is not configured */
 	RT_ASSERT(stepper->hw_timer != RT_NULL);		/* must config hardware timer */
+	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);			/* disable pwm output first */
 		/* use hardware timer to trapzoid accelerate */
 	rt_uint32_t acc_step, dec_step,dec_start;		/* acc_step: actual accelerate step, dec_step: decelerate step, dec_start: decelerate start step */
 	rt_uint32_t T0,T_min;							/* T0: initial period, T_min: min pulse period */
@@ -373,7 +389,422 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 	/* we disable pwm at first, then start hwtimer */
 	rt_hwtimerval_t timeouts_s;
 	timeouts_s.usec = T0;
-	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);/* we disable pwm at first */
+	rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);
 	rt_device_write(stepper->hw_timer,0,&timeouts_s,sizeof(timeouts_s));
 }
+
+rt_err_t _hw_timer_callback_s_curve(rt_device_t dev,rt_size_t size)
+{
+	lt_stepper_t stepper = (lt_stepper_t)(dev->user_data);
+	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);	/* disable pwm output at first */
+	stepper->index++;	
+	if(stepper->index >= stepper->max_index)		/* finish all work, keep constant pulse period */
+	{
+		stepper->index = 0;
+		stepper->max_index = 0;
+		stepper->hw_timer->user_data = stepper->parent.user_data;		/* change user_data */
+		rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);	/*  pwm output at first */
+		rt_free(stepper->accel_series);									/* release memory */
+		
+	}
+	else
+	{
+		rt_uint16_t index = stepper->index;
+		rt_uint32_t period = stepper->accel_series[index] * 1000;		/* unit : ns */
+		rt_hwtimerval_t timeout_s;
+		timeout_s.usec = stepper->accel_series[index];					/* unit: us */
+		/* start timer at first */
+		rt_device_write(stepper->hw_timer,0,&timeout_s,sizeof(timeout_s));
+		rt_pwm_set(stepper->parent.pwm,stepper->parent.pwm_channel,period,0.5*period);
+		rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);	 /* start pwm, ouptut a pulse! */
+	}
+	return RT_EOK;
+}
+
+static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config)
+{
+	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);		/* disable pwm output at first */
+	/* use cubic curves to calculate */
+	float delt_f = config->freq_max - config->freq_min;
+	float num,den,freq;
+	rt_uint16_t i;
+	if(config->step <= 0)	/* reversal rotation */
+	{
+		rt_pin_write(stepper->parent.forward_pin,PIN_LOW);
+		config->step = -config->step;
+	}
+	else					/* forward rotation */
+	{
+		rt_pin_write(stepper->parent.forward_pin,PIN_HIGH);
+	}
+	
+	rt_uint32_t *T_nums = rt_malloc((config->step)* sizeof(rt_uint32_t)); /* create a speed  period list, unit: us */
+	RT_ASSERT(T_nums != RT_NULL);					/* check res */
+	
+	for(i = 0; i < config->step; i++)
+	{
+		num = config->flexible * (i - config->step/2)/(config->step/2);
+		den = 1.0f + expf(-num);
+		freq = config->freq_min + delt_f*den;
+		T_nums[i] = 1000000.0f/freq;				/* get period, unit: us */
+	}
+	
+	if(stepper->accel_series != RT_NULL)
+	{
+		rt_free(stepper->accel_series);				/* free malloc memory */
+	}
+	stepper->accel_series = T_nums;					/* record period series */
+	stepper->max_index = config->step;
+	stepper->index = 0;								/* current index */
+	
+	/* open hwtimer,set timeout callback function */ 		
+	rt_device_open(stepper->hw_timer,RT_DEVICE_OFLAG_RDWR);	/* open hwtimer */
+	rt_device_set_rx_indicate(stepper->hw_timer,_hw_timer_callback_s_curve);	/* set timeout callback function */
+	/* here we use user_data variation to transport stepper object! */
+	stepper->parent.user_data = stepper->hw_timer->user_data;		/* record timer's user_data */
+	stepper->hw_timer->user_data = stepper;							
+	/* we start hwtimer, then enable pwm output */
+	rt_hwtimerval_t timeouts_s;
+	timeouts_s.usec = T_nums[0];
+	rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_device_write(stepper->hw_timer,0,&timeouts_s,sizeof(timeouts_s));
+	rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);			/* enable pwm output first */
+}
+
+static void _stepper_interp_config(lt_stepper_t stepper, struct lt_stepper_config_interp* config)
+{
+	lt_stepper_t x_stepper = (lt_stepper_t)config->x_stepper;
+	lt_stepper_t y_stepper = (lt_stepper_t)config->y_stepper;
+	rt_pwm_disable(x_stepper->parent.pwm,x_stepper->parent.pwm_channel);		/* disable pwm output at first */
+	rt_pwm_disable(y_stepper->parent.pwm,y_stepper->parent.pwm_channel);		/* disable pwm output at first */
+	rt_pin_write(x_stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pin_write(y_stepper->enable_pin,PIN_HIGH);		/* enable output */
+	config->deviation = 0;								/* clear deviation */
+	
+	/* configure hardware timer */
+	rt_hwtimerval_t timeouts_s;
+	rt_uint32_t period = stepper->period*1000000;					/* unit: ns */
+	int mode = HWTIMER_MODE_PERIOD;								
+	timeouts_s.usec = stepper->period*1000;							/* unit: us */
+	rt_device_open(stepper->hw_timer,RT_DEVICE_OFLAG_RDWR);			/* open hwtimer */
+	rt_device_control(stepper->hw_timer,HWTIMER_CTRL_MODE_SET,&mode);			/* set hwtimer mode period */
+	rt_device_write(stepper->hw_timer,0,&timeouts_s,sizeof(timeouts_s));
+	/* set pwm info */
+	rt_pwm_set(x_stepper->parent.pwm,x_stepper->parent.pwm_channel,period,0.5*period);
+	rt_pwm_set(y_stepper->parent.pwm,y_stepper->parent.pwm_channel,period,0.5*period);
+	/* here we use user_data variation to transport stepper object! */
+	stepper->parent.user_data = stepper->hw_timer->user_data;		/* record timer's user_data */
+	stepper->hw_timer->user_data = config;
+}
+
+rt_err_t _hw_timer_callback_line_interp(rt_device_t dev,rt_size_t size)
+{
+	struct lt_stepper_config_interp* config = (struct lt_stepper_config_interp*)(dev->user_data);
+	rt_pwm_disable(config->x_stepper->pwm,config->x_stepper->pwm_channel);		/* disable pwm output at first */
+	rt_pwm_disable(config->y_stepper->pwm,config->y_stepper->pwm_channel);		/* disable pwm output at first */
+	
+	if(config->num_pulse == 0)
+	{									/* finish all work, close hwtimer */
+		rt_device_close(dev);
+		/* change user_data */
+	}
+	if(config->deviation >= 0)
+	{
+		rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	/* X + 1 */
+		config->deviation -= config->y_end;
+	}
+	else
+	{
+		rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	/* Y + 1 */
+		config->deviation += config->x_end;
+	}
+	config->num_pulse--;				/* reduce pulse num */
+	
+}
+
+static void _motor_stepper_line_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config)
+{
+	if(!stepper->config_flag)	return;								/* stepper is not configured */
+	lt_stepper_t x_stepper = (lt_stepper_t)config->x_stepper;
+	lt_stepper_t y_stepper = (lt_stepper_t)config->y_stepper;
+	if(config->x_end < 0)
+	{
+		rt_pin_write(x_stepper->parent.forward_pin,PIN_LOW);		/* X reversal rotate */
+		config->x_end = - config->x_end;
+	}
+	else
+	{
+		rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);		/* X forward rotate */
+	}
+	
+	if(config->y_end < 0)
+	{
+		rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);		/* Y reversal rotate */
+		config->y_end = - config->y_end;
+	}
+	else
+	{
+		rt_pin_write(y_stepper->parent.forward_pin,PIN_HIGH);		/* Y forward rotate */
+	}
+	config->num_pulse = config->x_end + config->y_end;				/* get pulse number */
+	rt_device_set_rx_indicate(stepper->hw_timer,_hw_timer_callback_line_interp);	/* set timeout callback function */
+	_stepper_interp_config(stepper,config);							/* config interpolation  */
+}
+
+static void _circuler_interp_map(struct lt_stepper_config_interp* config)
+{
+	lt_stepper_t x_stepper = (lt_stepper_t)config->x_stepper;
+	lt_stepper_t y_stepper = (lt_stepper_t)config->y_stepper;
+	if(config->dir > 0)			/* clockwise interpolation */
+	{	
+		if(config->x_start > 0)
+		{
+			if(config->y_start > 0)
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+				config->x_dir = STEPPER_INTERP_DIR_CW;
+				config->y_dir = STEPPER_INTERP_DIR_CCW;
+			}
+			else
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+			}
+		}
+		else
+		{
+			if(config->y_start > 0)
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+			}
+			else
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+			}
+		}
+	}
+	else
+	{
+		if(config->x_start > 0)
+		{
+			if(config->y_start > 0)
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+			}
+			else
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+			}
+		}
+		else
+		{
+			if(config->y_start > 0)
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+			}
+			else
+			{
+				rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
+				rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
+			}
+		}
+	}
+	
+}
+static void _circular_interp_cw(struct lt_stepper_config_interp* config)
+{
+	if(config->deviation >= 0 )
+	{
+		switch(config->quadrant)
+		{
+			case 1:
+			{
+				rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	/* Y - 1 */
+				config->deviation = config->deviation - 2*config->y_start + 1;								
+				config->y_start -= 1;										      		/* refresh pos info */
+				break;
+			}
+			case 2:
+			{
+				rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	/* X + 1 */
+				config->deviation = config->deviation + 2*config->x_start + 1;								
+				config->x_start += 1;										      		/* refresh pos info */
+				break;
+			}
+			case 3:																		/* Y + 1 */
+			{
+				rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	
+				config->deviation = config->deviation + 2*config->y_start + 1;								
+				config->y_start += 1;										      		/* refresh pos info */
+				break;
+			}
+			case 4:																		/* X - 1*/
+			{
+				rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	
+				config->deviation = config->deviation - 2*config->y_start + 1;								
+				config->x_start -= 1;										      		/* refresh pos info */
+				break;
+			}
+			default:break;
+			
+		}
+	}
+	else
+	{
+		switch(config->quadrant)
+			{
+				case 1:
+				{
+					rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	/* X + 1 */
+					config->deviation = config->deviation + 2*config->x_start + 1;								
+					config->x_start += 1;										      		/* refresh pos info */
+					break;
+				}
+				case 2:
+				{
+					rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	/* Y + 1 */
+					config->deviation = config->deviation + 2*config->y_start + 1;								
+					config->y_start += 1;										      		/* refresh pos info */
+					break;
+				}
+				case 3:																		/* X - 1 */
+				{
+					rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	
+					config->deviation = config->deviation - 2*config->x_start + 1;								
+					config->x_start -= 1;										      		/* refresh pos info */
+					break;
+				}
+				case 4:																		/* Y - 1 */
+				{
+					rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	
+					config->deviation = config->deviation - 2*config->y_start + 1;								
+					config->y_start -= 1;										      		/* refresh pos info */
+					break;
+				}
+				default:break;
+				
+			}
+	}		
+}
+
+static void _circular_interp_ccw(struct lt_stepper_config_interp* config)
+{
+	if(config->deviation >= 0 )
+	{
+		switch(config->quadrant)
+		{
+			case 1:
+			{
+				rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	/* X - 1 */
+				config->deviation = config->deviation - 2*config->x_start + 1;								
+				config->x_start -= 1;										      		/* refresh pos info */
+				break;
+			}
+			case 2:
+			{
+				rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	/* Y - 1 */
+				config->deviation = config->deviation - 2*config->y_start + 1;								
+				config->y_start -= 1;										      		/* refresh pos info */
+				break;
+			}
+			case 3:																		/* X + 1 */
+			{
+				rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	
+				config->deviation = config->deviation + 2*config->x_start + 1;								
+				config->x_start += 1;										      		/* refresh pos info */
+				break;
+			}
+			case 4:																		/* Y + 1*/
+			{
+				rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	
+				config->deviation = config->deviation + 2*config->y_start + 1;								
+				config->y_start += 1;										      		/* refresh pos info */
+				break;
+			}
+			default:break;
+			
+		}
+	}
+	else
+	{
+		switch(config->quadrant)
+			{
+				case 1:
+				{
+					rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	/* Y + 1 */
+					config->deviation = config->deviation + 2*config->y_start + 1;								
+					config->y_start += 1;										      		/* refresh pos info */
+					break;
+				}
+				case 2:
+				{
+					rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	/* X - 1 */
+					config->deviation = config->deviation - 2*config->x_start + 1;								
+					config->x_start -= 1;										      		/* refresh pos info */
+					break;
+				}
+				case 3:																		/* Y - 1 */
+				{
+					rt_pwm_enable(config->y_stepper->pwm,config->y_stepper->pwm_channel);	
+					config->deviation = config->deviation - 2*config->y_start + 1;								
+					config->y_start -= 1;										      		/* refresh pos info */
+					break;
+				}
+				case 4:																		/* X + 1*/
+				{
+					rt_pwm_enable(config->x_stepper->pwm,config->x_stepper->pwm_channel);	
+					config->deviation = config->deviation + 2*config->x_start + 1;								
+					config->x_start += 1;										      		/* refresh pos info */
+					break;
+				}
+				default:break;
+			}
+	}		
+}
+
+
+rt_err_t _hw_timer_callback_circular_interp(rt_device_t dev,rt_size_t size)
+{
+	struct lt_stepper_config_interp* config = (struct lt_stepper_config_interp*)(dev->user_data);
+	rt_pwm_disable(config->x_stepper->pwm,config->x_stepper->pwm_channel);		/* disable pwm output at first */
+	rt_pwm_disable(config->y_stepper->pwm,config->y_stepper->pwm_channel);		/* disable pwm output at first */
+	
+	if(config->num_pulse == 0)
+	{									/* finish all work, close hwtimer */
+		rt_device_close(dev);
+	}
+	
+	if(config->dir == STEPPER_INTERP_DIR_CW)
+	{
+		_circular_interp_cw(config);
+	}
+	else
+	{
+		_circular_interp_ccw(config);
+	}
+	
+	config->num_pulse--;				/* reduce pulse num */
+}
+
+static void _motor_stepper_circular_interp(lt_stepper_t stepper, struct lt_stepper_config_interp* config)
+{
+	rt_int32_t tmp1 =  config->x_start - config->x_end, tmp2 = config->y_start - config->y_end;
+	if(tmp1 < 0) tmp1 = -tmp1;
+	if(tmp2 < 0) tmp2 = -tmp2;
+	config->num_pulse = tmp1 + tmp2;
+	/* map pos to first quadrent */
+	_circuler_interp_map(config);
+	rt_device_set_rx_indicate(stepper->hw_timer,_hw_timer_callback_circular_interp);	/* set timeout callback function */
+	_stepper_interp_config(stepper,config);							/* config interpolation  */
+	/* we should refresh start pos in each loop because we need pos info */
+}
+
+
 

@@ -156,7 +156,7 @@ static void process_thread_entry(void* parameter)
   rt_uint8_t frame_data[128];         // 要能放下最长的帧
   rt_uint16_t frame_len = 0;          // 帧长度
   rt_uint8_t cmd_type = CMD_NONE;     // 命令类型
-  float speed = 0;
+  float speed = 0;					  /* stop motor */
   while(1)
   {
     cmd_type = protocol_frame_parse(frame_data, &frame_len);
@@ -201,7 +201,7 @@ static void process_thread_entry(void* parameter)
       
       case RESET_CMD:
       {
-        rt_timer_stop(motor_timer);              // 停止电机
+        rt_timer_stop(motor_timer);              /* stop timer */
 		lt_pid_reset(motor_pid);				/* reset pid! */
 		lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&speed);
       }
@@ -221,7 +221,6 @@ static void process_thread_entry(void* parameter)
 
 void lt_motor_test(void)
 {
-	//rt_base_t forward = rt_pin_get("PA.6"), reversal = rt_pin_get("PA.7");
 	key_init();										/* init key! */
 	motor_pid = lt_pid_create(0,0,0,MEASURE_TIME);	/* init pid parameter, start from little parameter! */
 	//motor_pid = lt_pid_create(0.01,0.0,0.1);		/* init pid parameter */

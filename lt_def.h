@@ -32,7 +32,7 @@
 /* stepper motor definition parameter */
 #define STEPPER_MAX_SPEED			1000		/* stepper motor maximum speed */
 #define STEPPER_MIN_SPEED			0.1			/* stepper motor minimum speed, dead region */
-#define STEPPER_MAX_PERIOD			100000000	/* 1000ms, unit: ns */
+#define STEPPER_MAX_PERIOD			500000000	/* 500ms, unit: ns */
 #define STEPPER_DUTY_CYCLE			0.5			/* default duty cycle */
 
 #define STEPPER_ANGLE				1.8f
