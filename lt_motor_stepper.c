@@ -7,13 +7,13 @@ static void _timer_output_angle(void *parameter)
 	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);	/* disable pwm output */
 }
 
-
 static void _motor_stepper_output_angle(lt_stepper_t stepper,float angle);
 static void _motor_stepper_output(lt_stepper_t stepper, float input);
 static void _motor_stepper_config(lt_stepper_t,struct lt_stepper_config* config);
 static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config);
 static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config);
 static void _motor_stepper_line_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config);
+static void _motor_stepper_circular_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config);
 //static rt_thread_t _process;			/* process thread for acceleration and  interplation */
 
 static lt_motor_t _motor_stepper_create(char* name,rt_uint8_t reduction_ration,rt_uint8_t type)
@@ -122,6 +122,24 @@ static rt_err_t _motor_stepper_control(lt_motor_t motor, int cmd, void*arg)
 			_motor_stepper_trapzoid_accelerate(stepper,config);
 			break;
 		}
+		case STEPPER_CTRL_S_CURVE_ACCELERATE:
+		{
+			struct lt_stepper_config_accel* config = (struct lt_stepper_config_accel*)arg;
+			_motor_stepper_s_curve_accelerate(stepper,config);
+			break;
+		}
+		case STEPPER_CTRL_LINE_INTERPOLATION:
+		{
+			struct lt_stepper_config_interp* config = (struct lt_stepper_config_interp*)arg;
+			_motor_stepper_line_interp(stepper,config);
+			break;
+		}
+		case STEPPER_CTRL_CIRCULAR_INTERPOLATION:
+		{
+			struct lt_stepper_config_interp* config = (struct lt_stepper_config_interp*)arg;
+			_motor_stepper_circular_interp(stepper,config);
+			break;
+		}
 		default:break;
 	}
 	
@@ -141,8 +159,7 @@ static void _motor_stepper_output(lt_stepper_t stepper, float input)
 	/* rotate at a constant speed */
 	/* speed is proportional to frequency */
 	if(!stepper->config_flag)	return;					/* not configured */
-	
-	rt_pin_write(stepper->enable_pin,PIN_HIGH);			/* enable output */
+	rt_pin_write(stepper->enable_pin,PIN_LOW);			/* enable output */
 	stepper->parent.status = MOTOR_STATUS_RUN;			/* change motor status */
 	float output;
 	
@@ -175,7 +192,7 @@ static void _motor_stepper_output(lt_stepper_t stepper, float input)
 	if(output == 0)
 	{
 		rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);		/* no output */
-		
+		rt_pin_write(stepper->enable_pin,PIN_HIGH);								/* disable output */
 	}
 	else
 	{
@@ -190,7 +207,7 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 {
 	if(!stepper->config_flag) return;					/* stepper is not configured */
 	
-	rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pin_write(stepper->enable_pin,PIN_LOW);			/* enable output */
 	stepper->parent.status = MOTOR_STATUS_RUN;		/* change status */
 	if(angle > 0)		/* forward rotation */
 	{
@@ -206,7 +223,7 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 	else
 	{
 		rt_pin_write(stepper->parent.forward_pin,PIN_LOW);
-		rt_pin_write(stepper->enable_pin,PIN_LOW);		/* enable output */
+		rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* disable output */
 		stepper->parent.status = MOTOR_STATUS_STOP;
 		//rt_pin_write(stepper->parent.reversal_pin,PIN_LOW);
 	}
@@ -291,6 +308,7 @@ rt_err_t _hw_timer_callback_trapzoid(rt_device_t dev,rt_size_t size)
 		rt_device_close(stepper->hw_timer);		/* close hwtimer */
 		stepper->hw_timer->user_data = stepper->parent.user_data;		/* change user_data */
 		rt_free(stepper->accel_series);									/* release memory */
+		stepper->parent.status = MOTOR_STATUS_STOP;
 	}
 	else
 	{
@@ -311,7 +329,7 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 	if(!stepper->config_flag) return;				/* stepper is not configured */
 	RT_ASSERT(stepper->hw_timer != RT_NULL);		/* must config hardware timer */
 	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);			/* disable pwm output first */
-		/* use hardware timer to trapzoid accelerate */
+	/* use hardware timer to trapzoid accelerate */
 	rt_uint32_t acc_step, dec_step,dec_start;		/* acc_step: actual accelerate step, dec_step: decelerate step, dec_start: decelerate start step */
 	rt_uint32_t T0,T_min;							/* T0: initial period, T_min: min pulse period */
 	rt_uint32_t acc_max_step;						/* max accelerate step in theory */
@@ -331,12 +349,12 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 		config->step = -config->step;
 	}
 	/* get min period ang initial period */
-	T_min =  1000000*(stepper->stepper_angle/180)/(config->speed)*60;	    		/* speed unit: rpm, T_min unit: us */
-	T0 = 0.69*sqrtf(1000000 * 2*stepper->stepper_angle/180/config->accel)*1000*60;	/* initial period, t = sqrt(2*S/accel), unit: us, multiply error coefficiency */
+	T_min =  1000000*(stepper->stepper_angle/180.0f*PI)/(config->speed)/(stepper->subdivide);	    		/* speed unit: rad/s, T_min unit: us */
+	T0 = 0.69*sqrtf(1000000 * 2*stepper->stepper_angle/180.0f*PI/config->accel)*1000.0f/(stepper->subdivide);	/* initial period, t = sqrt(2*S/accel), unit: us, multiply error coefficiency */
 	if(T0 < T_min) T0 = T_min;
 	/* get accel step and max accel step */
 	acc_step = (config->speed*config->decel)/(config->accel + config->decel);
-	acc_max_step = (config->speed)*(config->speed)/(2.0f * 9.55f * config->accel);	/* S = v^2/(2*accel) */
+	acc_max_step = (config->speed)*(config->speed)/(2.0f * config->accel);			/* S = v^2/(2*accel) */
 	
 	if(acc_step <= acc_max_step)	/* stepper can't reach desired speed, so accel --> decel */
 	{ 
@@ -389,9 +407,10 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 	/* we disable pwm at first, then start hwtimer */
 	rt_hwtimerval_t timeouts_s;
 	timeouts_s.usec = T0;
-	rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pin_write(stepper->enable_pin,PIN_LOW);			/* enable output */
 	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);
 	rt_device_write(stepper->hw_timer,0,&timeouts_s,sizeof(timeouts_s));
+	stepper->parent.status = MOTOR_STATUS_ACCELERATE;
 }
 
 rt_err_t _hw_timer_callback_s_curve(rt_device_t dev,rt_size_t size)
@@ -406,7 +425,7 @@ rt_err_t _hw_timer_callback_s_curve(rt_device_t dev,rt_size_t size)
 		stepper->hw_timer->user_data = stepper->parent.user_data;		/* change user_data */
 		rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);	/*  pwm output at first */
 		rt_free(stepper->accel_series);									/* release memory */
-		
+		stepper->parent.status = MOTOR_STATUS_RUN;
 	}
 	else
 	{
@@ -467,9 +486,10 @@ static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_ste
 	/* we start hwtimer, then enable pwm output */
 	rt_hwtimerval_t timeouts_s;
 	timeouts_s.usec = T_nums[0];
-	rt_pin_write(stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pin_write(stepper->enable_pin,PIN_LOW);			/* enable output */
 	rt_device_write(stepper->hw_timer,0,&timeouts_s,sizeof(timeouts_s));
 	rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);			/* enable pwm output first */
+	stepper->parent.status = MOTOR_STATUS_ACCELERATE;
 }
 
 static void _stepper_interp_config(lt_stepper_t stepper, struct lt_stepper_config_interp* config)
@@ -478,8 +498,8 @@ static void _stepper_interp_config(lt_stepper_t stepper, struct lt_stepper_confi
 	lt_stepper_t y_stepper = (lt_stepper_t)config->y_stepper;
 	rt_pwm_disable(x_stepper->parent.pwm,x_stepper->parent.pwm_channel);		/* disable pwm output at first */
 	rt_pwm_disable(y_stepper->parent.pwm,y_stepper->parent.pwm_channel);		/* disable pwm output at first */
-	rt_pin_write(x_stepper->enable_pin,PIN_HIGH);		/* enable output */
-	rt_pin_write(y_stepper->enable_pin,PIN_HIGH);		/* enable output */
+	rt_pin_write(x_stepper->enable_pin,PIN_LOW);		/* enable output */
+	rt_pin_write(y_stepper->enable_pin,PIN_LOW);		/* enable output */
 	config->deviation = 0;								/* clear deviation */
 	
 	/* configure hardware timer */
@@ -496,6 +516,7 @@ static void _stepper_interp_config(lt_stepper_t stepper, struct lt_stepper_confi
 	/* here we use user_data variation to transport stepper object! */
 	stepper->parent.user_data = stepper->hw_timer->user_data;		/* record timer's user_data */
 	stepper->hw_timer->user_data = config;
+	stepper->parent.status = MOTOR_STATUS_INTERP;
 }
 
 rt_err_t _hw_timer_callback_line_interp(rt_device_t dev,rt_size_t size)
@@ -507,6 +528,8 @@ rt_err_t _hw_timer_callback_line_interp(rt_device_t dev,rt_size_t size)
 	if(config->num_pulse == 0)
 	{									/* finish all work, close hwtimer */
 		rt_device_close(dev);
+		config->x_stepper->status = MOTOR_STATUS_STOP;
+		config->y_stepper->status = MOTOR_STATUS_STOP;
 		/* change user_data */
 	}
 	if(config->deviation >= 0)
@@ -520,7 +543,7 @@ rt_err_t _hw_timer_callback_line_interp(rt_device_t dev,rt_size_t size)
 		config->deviation += config->x_end;
 	}
 	config->num_pulse--;				/* reduce pulse num */
-	
+	return RT_EOK;
 }
 
 static void _motor_stepper_line_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config)
@@ -564,8 +587,6 @@ static void _circuler_interp_map(struct lt_stepper_config_interp* config)
 			{
 				rt_pin_write(x_stepper->parent.forward_pin,PIN_HIGH);	/* CW */
 				rt_pin_write(y_stepper->parent.forward_pin,PIN_LOW);	/* CCW */
-				config->x_dir = STEPPER_INTERP_DIR_CW;
-				config->y_dir = STEPPER_INTERP_DIR_CCW;
 			}
 			else
 			{
@@ -779,6 +800,8 @@ rt_err_t _hw_timer_callback_circular_interp(rt_device_t dev,rt_size_t size)
 	if(config->num_pulse == 0)
 	{									/* finish all work, close hwtimer */
 		rt_device_close(dev);
+		config->x_stepper->status = MOTOR_STATUS_STOP;
+		config->y_stepper->status = MOTOR_STATUS_STOP;
 	}
 	
 	if(config->dir == STEPPER_INTERP_DIR_CW)
@@ -791,10 +814,12 @@ rt_err_t _hw_timer_callback_circular_interp(rt_device_t dev,rt_size_t size)
 	}
 	
 	config->num_pulse--;				/* reduce pulse num */
+	return RT_EOK;
 }
 
 static void _motor_stepper_circular_interp(lt_stepper_t stepper, struct lt_stepper_config_interp* config)
 {
+	
 	rt_int32_t tmp1 =  config->x_start - config->x_end, tmp2 = config->y_start - config->y_end;
 	if(tmp1 < 0) tmp1 = -tmp1;
 	if(tmp2 < 0) tmp2 = -tmp2;

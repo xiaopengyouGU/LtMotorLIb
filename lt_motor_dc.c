@@ -48,7 +48,7 @@ static float _motor_dc_measure_position(lt_motor_t motor)
 	rt_device_open(encoder,RT_DEVICE_OFLAG_RDONLY);
 	rt_device_read(encoder,0,&count,1);
 	
-	position = (float)(count)/(motor->resolution * motor->reduction_ratio);
+	position = (float)(-count)/(motor->resolution * motor->reduction_ratio);	/* notice direction! */
 	position *= 360;
 	
 	return position;
@@ -127,13 +127,13 @@ static void _motor_dc_output(lt_motor_t motor, float input)
 	else if(input < MOTOR_MIN_SPEED)	/* dead region */
 	{
 		output = 0;
-		motor->status = MOTOR_STATUS_STOP;
+		motor->status = MOTOR_STATUS_STOP;	/* change motor status */
 	}
 	else
 	{
 		output = input;
 	}
-	output = output*MOTOR_PERIOD/MOTOR_MAX_VAL;
+	output = output*MOTOR_PERIOD/MOTOR_MAX_SPEED;
 	rt_pwm_set(motor->pwm,motor->pwm_channel,MOTOR_PERIOD,(rt_uint32_t)(output));
 	rt_pwm_enable(motor->pwm,motor->pwm_channel);
 }
@@ -150,7 +150,7 @@ static void _motor_dc_output_angle(lt_motor_t motor,float angle)
 		angle = MOTOR_MAX_ANGLE;
 	}
 	/* transform angle to pulse */
-	angle = MOTOR_ANGLE_BASE+(angle/MOTOR_MAX_ANGLE)*MOTOR_ANGLE_PERIOD;		/* correspond to 0.5ms - 2.5ms */
+	angle = MOTOR_ANGLE_BASE + (angle/MOTOR_MAX_ANGLE)*MOTOR_ANGLE_PERIOD/10;		    /* correspond to 0.5ms - 2.5ms */
 	rt_pwm_set(motor->pwm,motor->pwm_channel,MOTOR_ANGLE_PERIOD,(rt_uint32_t)angle);	/* period : 20ms */
 	rt_pwm_enable(motor->pwm,motor->pwm_channel);
 }

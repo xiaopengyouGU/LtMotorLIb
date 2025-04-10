@@ -10,11 +10,11 @@ lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t t
 			motor = _motor_dc_ops.create(name,reduction_ration,type);
 			break;
 		}
-		case MOTOR_TYPE_BLDC:
-		{
-			motor = _motor_bldc_ops.create(name,reduction_ration,type);
-			break;
-		}
+//		case MOTOR_TYPE_BLDC:
+//		{
+//			motor = _motor_bldc_ops.create(name,reduction_ration,type);
+//			break;
+//		}
 		case MOTOR_TYPE_STEPPER:
 		{
 			motor = _motor_stepper_ops.create(name,reduction_ration,type);
@@ -129,8 +129,16 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(motor->ops != RT_NULL);
 	RT_ASSERT(motor->ops->control != RT_NULL);
-	
-	return motor->ops->control(motor,cmd,arg);
+	if(cmd == MOTOR_CTRL_GET_STATUS)
+	{
+		rt_uint8_t* status = (rt_uint8_t *)arg;
+		*status = motor->status;
+		return RT_EOK;
+	}
+	else
+	{
+		return motor->ops->control(motor,cmd,arg);
+	}
 }
 
 rt_err_t lt_motor_set_ops(lt_motor_t motor, struct lt_motor_ops * ops)
@@ -138,4 +146,7 @@ rt_err_t lt_motor_set_ops(lt_motor_t motor, struct lt_motor_ops * ops)
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(ops != RT_NULL);
 	motor->ops = ops;
+	return RT_EOK;
 }
+
+char * _status[4] = {"STOP","RUN","ACCELERATE","INTERP"};

@@ -15,6 +15,8 @@ lt_pid_t lt_pid_create(float Kp, float Ki, float Kd, float dt_ms)
 	pid->integral= 0.0;
 	pid->target_val = 0.0;
 	pid->dt = dt_ms/1000;
+	pid->int_limit = PID_INTEGRAL_LIMIT;			/* default integral limit */
+	pid->output_limit = PID_OUTPUT_LIMIT;			/* default output limit */
 	return pid;
 }
 
@@ -54,6 +56,19 @@ void lt_pid_set_dt(lt_pid_t pid, float dt_ms)
 	pid->dt = dt_ms/1000;
 }
 
+void lt_pid_set_output_limit(lt_pid_t pid,float limit)
+{
+	RT_ASSERT(pid != RT_NULL);
+	if(limit < 0) limit = -limit;
+	pid->output_limit = limit;
+}
+void lt_pid_set_int_limit(lt_pid_t pid,float limit)
+{
+	RT_ASSERT(pid != RT_NULL);
+	if(limit < 0) limit = -limit;
+	pid->int_limit = limit;
+}
+
 float lt_pid_get_control(lt_pid_t pid)
 {
 	RT_ASSERT(pid != RT_NULL);
@@ -66,23 +81,23 @@ float lt_pid_control(lt_pid_t pid,float curr_val)
 	pid->err = pid->target_val - curr_val;
 	pid->integral += pid->err;
 	
-	if(pid->integral >= PID_INTEGRAL_LIMIT)		/* anti-windup */
+	if(pid->integral >= pid->int_limit)		/* anti-windup */
 	{
-		pid->integral = PID_INTEGRAL_LIMIT;
+		pid->integral = pid->int_limit;
 	}
-	else if(-pid->integral >= PID_INTEGRAL_LIMIT)
+	else if(-pid->integral >= pid->int_limit)
 	{
-		pid->integral = -PID_INTEGRAL_LIMIT;
+		pid->integral = -pid->int_limit;
 	}
 	/* output limit */
 	pid->control_u = pid->Kp*pid->err + pid->Ki*pid->integral*pid->dt + pid->Kd*(pid->err - pid->err_prev)/pid->dt;
-	if(pid->control_u >= PID_OUTPUT_LIMIT)
+	if(pid->control_u >= pid->output_limit)
 	{
-		pid->control_u = PID_OUTPUT_LIMIT;
+		pid->control_u = pid->output_limit;
 	}
-	else if(-pid->control_u >= PID_OUTPUT_LIMIT)
+	else if(-pid->control_u >= pid->output_limit)
 	{
-		pid->control_u = -PID_OUTPUT_LIMIT;
+		pid->control_u = -pid->output_limit;
 	}
 	
 	pid->err_prev = pid->err;
@@ -102,13 +117,13 @@ float lt_pid_incre_control(lt_pid_t pid, float curr_val)
 	
 	pid->control_u += increment;
 	/* output limit */
-	if(pid->control_u >= PID_OUTPUT_LIMIT)
+	if(pid->control_u >= pid->output_limit)
 	{
-		pid->control_u = PID_OUTPUT_LIMIT;
+		pid->control_u = pid->output_limit;
 	}
-	else if(-pid->control_u >= PID_OUTPUT_LIMIT)
+	else if(-pid->control_u >= pid->output_limit)
 	{
-		pid->control_u = -PID_OUTPUT_LIMIT;
+		pid->control_u = -pid->output_limit;
 	}
 	
 	return pid->control_u;

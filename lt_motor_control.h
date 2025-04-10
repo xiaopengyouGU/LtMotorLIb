@@ -8,7 +8,7 @@
 void lt_motor_test(void);
 /* declare special motor operators */
 extern struct lt_motor_ops _motor_dc_ops;
-extern struct lt_motor_ops _motor_bldc_ops;
+//extern struct lt_motor_ops _motor_bldc_ops;
 extern struct lt_motor_ops _motor_stepper_ops;
 /*******************************************************************************/
 /* define pid object */
@@ -22,6 +22,8 @@ struct lt_pid_object
 	float Kp,Ki,Kd;
 	float integral;
 	float dt;			/* sample time */
+	float int_limit;	/* integral limit */
+	float output_limit;	/* output limit */	
 };
 typedef struct lt_pid_object* lt_pid_t;
 
@@ -32,6 +34,8 @@ void lt_pid_reset(lt_pid_t pid);
 void lt_pid_set(lt_pid_t pid, float Kp, float Ki, float Kd);
 void lt_pid_set_target(lt_pid_t pid, float target);
 void lt_pid_set_dt(lt_pid_t pid, float dt);
+void lt_pid_set_output_limit(lt_pid_t pid,float limit);
+void lt_pid_set_int_limit(lt_pid_t pid,float limit);		/* set integral limit */
 
 float lt_pid_get_control(lt_pid_t pid);
 float lt_pid_control(lt_pid_t pid,float curr_val);
@@ -62,16 +66,18 @@ float lt_pid_incre_control(lt_pid_t pid, float curr_val);
 #define PWM_CHANNEL_4 0x04
 
 /* motor status */
-#define MOTOR_STATUS_RUN				0x00
-#define MOTOR_STATUS_STOP				0x01
+#define MOTOR_STATUS_STOP				0x00
+#define MOTOR_STATUS_RUN				0x01
 #define MOTOR_STATUS_ACCELERATE			0x02
-#define MOTOR_STATUS_DECELERATE			0x03
+#define MOTOR_STATUS_INTERP				0x03
+extern char * _status[4];
 
 /* motor control command */
 #define MOTOR_CTRL_OUTPUT				0x01
 #define MOTOR_CTRL_OUTPUT_ANGLE			0x02
-#define MOTOR_CTRL_MEASURE_SPEED		0x03
-#define MOTOR_CTRL_MEASURE_POSITION		0x04
+#define MOTOR_CTRL_GET_STATUS			0x03
+#define MOTOR_CTRL_MEASURE_SPEED		0x04
+#define MOTOR_CTRL_MEASURE_POSITION		0x05
 
 struct lt_motor_ops;
 
@@ -91,7 +97,7 @@ struct lt_motor_object{
 //	float target_speed;
 //	float position;
 //	float target_position;
-	rt_int32_t encoder_count;			/* prev encoder number */	
+	rt_int32_t encoder_count;			/* prev encoder count */	
 	rt_uint8_t type;
 	rt_uint8_t status;					/* motor status */
 	const struct lt_motor_ops *ops;		/* motor control operators */
@@ -123,6 +129,7 @@ rt_err_t lt_motor_control(lt_motor_t, int cmd, void* arg);
 
 #define STEPPER_CTRL_OUTPUT					MOTOR_CTRL_OUTPUT
 #define STEPPER_CTRL_OUTPUT_ANGLE			MOTOR_CTRL_OUTPUT_ANGLE
+#define STEPPER_CTRL_GET_STATUS				MOTOR_CTRL_GET_STATUS
 #define STEPPER_CTRL_MEASURE_SPEED			MOTOR_CTRL_MEASURE_SPEED
 #define STEPPER_CTRL_MEASURE_POSITION		MOTOR_CTRL_MEASURE_POSITION
 /* basic control commanda are the same */
@@ -140,8 +147,8 @@ rt_err_t lt_motor_control(lt_motor_t, int cmd, void* arg);
 #define TIMER_NUM_4 0x04
 #define TIMER_NUM_5 0x05
 
-#define STEPPER_INTERP_DIR_CW	1
-#define STEPPER_INTERP_DIR_CCW	-1
+#define STEPPER_INTERP_DIR_CW	0
+#define STEPPER_INTERP_DIR_CCW	1
 
 struct lt_motor_stepper_object
 {
@@ -173,9 +180,9 @@ struct lt_stepper_config
 struct lt_stepper_config_accel
 {
 	int step;				/* +: forward, -: reversal */
-	rt_uint16_t accel;		/* accelerarte, unit : rpm/m */
-	rt_uint16_t decel;		/* decelerate, unit : rpm/m */
-	rt_uint16_t speed;		/* speed, unit : rpm */
+	float accel;			/* accelerarte, unit : rad/s^2 */
+	float decel;			/* decelerate, unit : rad/s^2 */
+	float speed;			/* speed, unit : rad/s  */
 	float freq_max;			/* max frequency */
 	float freq_min;			/* min frequency */
 	float flexible;			/* curve shape factor: flexible = 0 --> constant accel */
@@ -187,15 +194,12 @@ struct lt_stepper_config_interp
 	rt_int32_t y_start;
 	rt_int32_t x_end;
 	rt_int32_t y_end;
-	rt_int8_t dir;				/* interpolation direction, 1: clockwise, -1: counter-clockwise */
+	rt_uint8_t dir;				/* interpolation direction, 0: clockwise, 1: counter-clockwise */
 	rt_uint32_t freq;
 	rt_uint32_t num_pulse;
 	lt_motor_t x_stepper;
 	lt_motor_t y_stepper;
 	rt_int32_t deviation;		/* position deviation */
-	rt_uint8_t curr_axis;		/* current axis */
-	rt_int8_t x_dir;			/* x move direction, 1: clockwise, -1: counter-clockwise */
-	rt_int8_t y_dir;			/* y move direction */
 	rt_uint8_t quadrant;			/* circular quadrant */
 };
 

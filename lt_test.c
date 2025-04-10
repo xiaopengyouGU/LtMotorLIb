@@ -1,36 +1,79 @@
 #include "lt_motor_control.h"
 #include "protocol.h"
 #include "key.h"
+#include "stdlib.h"
 
-//test event 
-#define FORWARD_PIN		GET_PIN(F,6)
-#define REVERSAL_PIN	GET_PIN(F,7)
-#define OUTPUT_CHANNEL	PWM_CHANNEL_4
-#define MEASURE_TIME	100		//20 for stepper motor
+/* when communicating with upper computer, FINSH is forbidden */
+/* basic command, eg: MOTOR_CTRL_OUTPUT	works on all motor
+*  in fact, MOTOR_CTRL_OUTPUT = STEPPER_CTRL_OUPUT = BLDC_CTRL_OUTPUT
+*/
+/*************************************  setup table  **************************************************/
+//#define TEST_MOTOR_OUTPUT_ANGLE	
+//#define MOTOR_TYPE						MOTOR_TYPE_DC
+#define MOTOR_TYPE							MOTOR_TYPE_STEPPER
+//#define MOTOR_TYPE						MOTOR_TYPE_BLDC
+#define MOTOR_NAME						"motor1"
+#define TIMER_NAME						"timer_m"
+#define STEPPER_TEST					
+//#define BLDC_TEST						
+/* PF6 is bad */
+/* basic config param */
+#define FORWARD_PIN						GET_PIN(F,8)
+#define REVERSAL_PIN					GET_PIN(F,7)		/* in stepper case, FORWARD_PIN equals to REVERSAL_PIN, only handle FORWARD_PIN */
+#define OUTPUT_CHANNEL					PWM_CHANNEL_4
+#define PWM_NUM							PWM_NUM_1
+#define ENCODER_NUM						PULSE_ENCODER_NUM_1
+/* stepper's specific config param */
+#define ENABLE_PIN						GET_PIN(F,7)		
+#define STEPPER_PERIOD					10					/* unit: ms */
+#define STEPPER_ANGLE					1.8
+#define STEPPER_SUBDIVIDE				2
+#define STEPPER_TIMER_NUM				TIMER_NUM_1			/* timer 1-5*/
+#define STEPPER_TIMER_FREQ				1000000
+	
+#define TARGET_SPEED					120
+#define TARGET_POSITION 				150
+#define REDUCTION_RATIO					1					/* DC motor: 34 ; stepper motor: 1*/
+#define ENCODER_TOTAL_RESOLUTION		4*600 				/*DC motor: 4*13; stepper motor: 4*600 */
 
-#define TARGET_SPEED	120
-#define TARGET_POSITION 150
+#define SAMPLE_TIME						100					/* unit: ms, 20 for stepper motor */
+#define KP								2.1
+#define KI								0.1
+#define KD								0.5
+
+#ifdef RT_USING_FINSH 
+#ifndef TEST_MOTOR_OUTPUT_ANGLE
+#define TIMEOUT_FUNC					timeout_func
+#endif
+#else
+//#define TIMEOUT_FUNC					pid_test		/* software timer callback function */
+//#define TIMEOUT_FUNC					velocity_loop				
+//#define TIMEOUT_FUNC					position_loop
+#define TIMEOUT_FUNC					position_velocity_loop
+#endif
+/*************************************  setup table  **************************************************/
 /* ADC --> PA6
 *  DAC --> PA4
 *  DAC --> PA5
 *  PWM --> PA3
 *  Encoder --> PB6 ， PB7
+*  stepper motor driver is common-cathode
 */
 
-
-/* when communicating with upper computer, FINSH is forbidden */
 rt_align(RT_ALIGN_SIZE)	
 
-static rt_thread_t motor_t;
-static lt_pid_t motor_pid;
 static lt_motor_t motor;
 static rt_timer_t motor_timer;
+/* stepper for interpolation */
+static lt_motor_t x_stepper;
+static lt_motor_t y_stepper;
 
-static lt_pid_t pos_pid;		/* position pid */
-static lt_pid_t vel_pid;		/* velocity pid */
-//test event 
+
+#ifdef RT_USING_FINSH
+/* test event */ 
 #define EVENT_KEY0	(1 << 3)
 #define EVENT_KEY_UP (1 << 5)
+static rt_thread_t motor_t;
 static rt_thread_t key_thread;
 static rt_event_t key_event;
 
@@ -55,18 +98,11 @@ static void key_thread_entry(void *parameter)
 	}
 }
 
-#ifndef RT_USING_FINSH
-static rt_thread_t process_t;
-#endif
 
-#ifdef RT_USING_FINSH
 static void motor_thread_entry(void *parameter)
 {
-	float speed,angle;
 	float output = 0;
-	rt_uint8_t key_val;
 	rt_uint32_t event;
-	rt_uint32_t voltage;
 	while(1)
 	{
 		rt_event_recv(key_event,(EVENT_KEY0 | EVENT_KEY_UP),
@@ -81,24 +117,36 @@ static void motor_thread_entry(void *parameter)
 			output += 20;
 		}
 		rt_kprintf("event: %d, output: %.1f \n",event,output);
+#ifdef TEST_MOTOR_OUTPUT_ANGLE
+		lt_motor_control(motor,MOTOR_CTRL_OUTPUT_ANGLE,&output);
+#else
 		lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&output);
-	
+#endif
+		
 	}
 }
-
+#ifndef TEST_MOTOR_OUTPUT_ANGLE
 static void timeout_func(void *parameter)
 {
-	float speed = lt_motor_measure_speed(motor,MEASURE_TIME);	/* measure time: 100ms */
+	float speed = lt_motor_measure_speed(motor,SAMPLE_TIME);	/* measure time: 100ms */
 	rt_kprintf("motor speed: %.2f r/s , %.2f rpm \n ",speed,speed* 60);	/* finsh must enable float output */
 	if(speed == 0)
 	{
-		lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&speed);		/* avoid locking rotor*/
+		lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&speed);		/* avoid locking rotor */
 		return;
 	}
 }
+#endif
+
 #else 
-static void timeout_func(void *parameter)
+static rt_thread_t process_t;
+static lt_pid_t motor_pid;		/* motor pid */
+static lt_pid_t pos_pid;		/* position pid */
+static lt_pid_t vel_pid;		/* velocity pid */
+
+static void pid_test(void *parameter)
 {
+	/* eg: KP = 0.26, KI = 0.9, KD = 0.02 */
 	float read_val = lt_pid_get_control(motor_pid);
 	float curr_val = lt_pid_control(motor_pid,read_val);
 	int temp = curr_val;									/* transform data */
@@ -107,8 +155,9 @@ static void timeout_func(void *parameter)
 
 static void velocity_loop(void *parameter)
 {
-	float speed = lt_motor_measure_speed(motor,MEASURE_TIME) * 60;	/* get rpm */
-	float control_u = 0.1f * lt_pid_control(motor_pid,speed);
+	/* eg: KP = 1.96, KI = 1.6, KD = 0.01 */
+	float speed = lt_motor_measure_speed(motor,SAMPLE_TIME) * 60;	/* get rpm */
+	float control_u = 0.1f * lt_pid_control(motor_pid,speed);		/* multiply a coefficiency */
 	int t_speed = speed, t_control_u = control_u;							
 	/* transform control force to duty circle of PWM output */
 	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);			/* output */
@@ -119,6 +168,7 @@ static void velocity_loop(void *parameter)
 
 static void position_loop(void *parameter)
 {
+	/* eg: KP = 10.1, KI = 23, KD = 0.01 */
 	float position = lt_motor_measure_position(motor);			/* get motor angle */
 	float control_u = 0.01f * lt_pid_control(motor_pid,position);
 	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);
@@ -130,19 +180,23 @@ static void position_loop(void *parameter)
 
 static void position_velocity_loop(void *parameter)
 {
+	/* we adjust vel_pid first */
+	motor_pid = pos_pid;	/* DC motor: Kp = 3.9, Ki = 1.5, Kd = 1.05 */
+	//motor_pid = vel_pid; 	/* DC motor: Kp = 1.8, Ki = 2, Kd = 0.3 */
 	static rt_uint32_t count = 0;
 	/* process position loop first, sample time 3T */
 	if(count % 3 == 0)
 	{
 		float position = lt_motor_measure_position(motor);
-		float desired_speed = 0.03f * lt_pid_control(pos_pid,position);
+		float desired_speed = lt_pid_control(pos_pid,position);
 		lt_pid_set_target(vel_pid,desired_speed);
 		int t_position = position;
 		set_computer_value(SEND_FACT_CMD,CURVES_CH1,&t_position,1);
 	}
 	/* velocity loop follow, sample time T */
-	float speed = lt_motor_measure_speed(motor,MEASURE_TIME);
-	float control_u = 0.1f * lt_pid_control(vel_pid,speed);
+	float speed = lt_motor_measure_speed(motor,SAMPLE_TIME);
+	float control_u = 0.01f * lt_pid_control(vel_pid,speed);
+	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
 	int t_speed = speed*100, t_control_u = control_u * 100;		/* let control and speed curves smoother */
 	
 	set_computer_value(SEND_FACT_CMD,CURVES_CH2,&t_speed,1);
@@ -180,8 +234,8 @@ static void process_thread_entry(void* parameter)
 
       case SET_TARGET_CMD:
       {
-		int actual_temp = COMPOUND_32BIT(&frame_data[13]);    // 得到数据
-		lt_pid_set_target(motor_pid,actual_temp);    // 设置目标值
+		int actual_temp = COMPOUND_32BIT(&frame_data[13]);    	// 得到数据
+		lt_pid_set_target(motor_pid,actual_temp);    			// 设置目标值
       }
       break;
       
@@ -219,34 +273,49 @@ static void process_thread_entry(void* parameter)
 }
 #endif
 
+/* motor test frame */
 void lt_motor_test(void)
 {
-	key_init();										/* init key! */
-	motor_pid = lt_pid_create(0,0,0,MEASURE_TIME);	/* init pid parameter, start from little parameter! */
-	//motor_pid = lt_pid_create(0.01,0.0,0.1);		/* init pid parameter */
-	lt_pid_set_target(motor_pid,TARGET_SPEED);		/* set target speed */
-	if(motor_pid == RT_NULL) return;
-	
 	/* create a motor */
-	motor = lt_motor_create("motor1",MOTOR_REDUCTION_RATIO,MOTOR_TYPE_DC);
-	lt_motor_set_pwm(motor,PWM_NUM_1,OUTPUT_CHANNEL);
-	lt_motor_set_encoder(motor,PULSE_ENCODER_NUM_1,ENCODER_TOTAL_RESOLUTION);
-	lt_motor_set_dir_pins(motor,FORWARD_PIN,REVERSAL_PIN);
+	motor = lt_motor_create(MOTOR_NAME,REDUCTION_RATIO,MOTOR_TYPE);
+	lt_motor_set_pwm(motor,PWM_NUM,OUTPUT_CHANNEL);						/* set pwm and channel */
+	lt_motor_set_encoder(motor,ENCODER_NUM,ENCODER_TOTAL_RESOLUTION);	/* set pulse encoder */
+	lt_motor_set_dir_pins(motor,FORWARD_PIN,REVERSAL_PIN);				/* in stepper case, we set FORWARD_PIN equal to REVERSAL_PIN */
 	
 	if(motor == RT_NULL) return;
+#ifdef STEPPER_TEST														/* config a stepper motor */
+	struct lt_stepper_config config;
+	config.enable_pin = ENABLE_PIN;
+	config.period = STEPPER_PERIOD;										/* unit: 10ms */
+	config.stepper_angle = STEPPER_ANGLE;								/* unit: degree */
+	config.subdivide = STEPPER_SUBDIVIDE;	
+	config.timer_num = STEPPER_TIMER_NUM;								/* hardware timer number */
+	//config.timer_freq = STEPPER_TIMER_FREQ;		 					/* default: 1Mhz */
+	lt_motor_control(motor,STEPPER_CTRL_CONFIG,&config);				/* config stepper */		
+#endif	
+	
+
+/* create software timer */	
+#ifndef TEST_MOTOR_OUTPUT_ANGLE
+	motor_timer = rt_timer_create(TIMER_NAME,TIMEOUT_FUNC,RT_NULL,SAMPLE_TIME,RT_TIMER_FLAG_PERIODIC);
+	if(motor_timer == RT_NULL) return;
+#endif
+	
 #ifdef RT_USING_FINSH
+	key_init();											/* init key! */
+	/* create a motor thread */
 	motor_t = rt_thread_create("motor",
 								motor_thread_entry,
 								RT_NULL,
-								1024,		/* thread stack size must big enough!!! */
+								1024,					/* thread stack size must big enough!!! */
 								10,
 								20);
 		
 	if(motor_t != RT_NULL)
 	{
-		rt_thread_startup(motor_t);	//启动线程
+		rt_thread_startup(motor_t);	/* start thread */
 	}
-	
+	/* create key event */
 	key_event = rt_event_create("my_event",RT_IPC_FLAG_PRIO);
 	if(key_event == RT_NULL)
 	{
@@ -262,19 +331,19 @@ void lt_motor_test(void)
 								20);
 	if(key_thread != RT_NULL)
 	{
-		rt_thread_startup(key_thread);	//启动线程
+		rt_thread_startup(key_thread);			/* start thread */
 	}
-	motor_timer = rt_timer_create("timer_m",timeout_func,RT_NULL,MEASURE_TIME,RT_TIMER_FLAG_PERIODIC);
-	if(motor_timer == RT_NULL) return;
-	rt_timer_start(motor_timer);		/* start timer! */
+
 #else
-	//motor_timer = rt_timer_create("timer_m",timeout_func,RT_NULL,MEASURE_TIME,RT_TIMER_FLAG_PERIODIC);
-	//motor_timer = rt_timer_create("timer_m",velocity_loop,RT_NULL,MEASURE_TIME,RT_TIMER_FLAG_PERIODIC);
-	motor_timer = rt_timer_create("timer_m",position_loop,RT_NULL,MEASURE_TIME,RT_TIMER_FLAG_PERIODIC);
-	if(motor_timer == RT_NULL) return;
+	motor_pid = lt_pid_create(KP,KI,KD,SAMPLE_TIME);	/* init pid parameter, start from little parameter! */
+	vel_pid = lt_pid_create(1.8,2,0.3,SAMPLE_TIME);		/* creata velocity pid and position pid*/
+	pos_pid = lt_pid_create(3.9,1.5,1.05,SAMPLE_TIME*3);
+	lt_pid_set_target(motor_pid,TARGET_SPEED);			/* set target speed */
+	lt_pid_set_target(pos_pid,TARGET_POSITION);			
+	if(motor_pid == RT_NULL) return;
 	
-	protocol_init();								/* init protocol to communicate with computer */
-	process_t = rt_thread_create("process",
+	protocol_init();							/* init protocol to communicate with computer */
+	process_t = rt_thread_create("process",		/* create a process thread */
 								process_thread_entry,
 								RT_NULL,
 								512,
@@ -282,13 +351,209 @@ void lt_motor_test(void)
 								20);
 	if(process_t != RT_NULL)
 	{
-		rt_thread_startup(process_t);	//启动线程
+		rt_thread_startup(process_t);			/* start thread */
 	}
 #endif
 }
 
-MSH_CMD_EXPORT(lt_motor_test, dc motor test);
+MSH_CMD_EXPORT(lt_motor_test, motor test);
+
+#ifdef STEPPER_TEST
+/* trapzoid accelerate */
+void stepper_trapzoid_accelerate(int step,float acc, float dec, float speed)
+{
+	struct lt_stepper_config_accel config;
+	config.accel = acc;				/* unit: rad/s^2 */
+	config.decel = dec;				/* unit: rad/s^2 */
+	config.speed = speed;				/* unit: rad/s = 9.55rpm */
+	config.step = step;				/* unit: step, >=0 : forward , <0 : reversal */
+	/* memory must be enough for large amount of step */
+	lt_motor_control(motor,STEPPER_CTRL_TRAPZOID_ACCELERATE,&config);
+}
+
+/* use FINSH to help test functions */
+#ifdef RT_USING_FINSH
+#ifdef LT_USING_MOTOR_TEST
+static void _test_info(int argc);
+static void _test_basic(int argc,char*argv[]);
+static void _test_stepper(int argc, char*argv[]);
+//static void _test_bldc(int argc, char*argv[]);
+static void motor_test(int argc, char*argv[])
+{
+	if(argc == 1 || argc == 2)
+	{
+		_test_info(argc);		/* show motor_test information */
+	}
+	else if(argc == 3 || argc == 4)
+	{
+		_test_basic(argc,argv);/* basic part of motor_test */
+	}
+	else
+	{
+		if(!rt_strcmp(argv[1],"stepper"))
+		{
+			_test_stepper(argc,argv);	/* stepper part of motor_test */
+		}
+	}
+
+}
+MSH_CMD_EXPORT(motor_test, some motor tests examples );
 
 
+/* show motor_test info */
+static void _test_info(int argc)
+{
+	if(argc == 1)
+	{
+		rt_kprintf("LtMotorLib --> A motor control library based on RT_Thread RTOS!!!\n ");
+		rt_kprintf("Author: LvTou, Date: 2025/4/5, Version: 0.1 \n");
+		rt_kprintf("LtMotorLib tests support finsh, by which you would be familar with LtMotorLib quickly!\n ");
+		rt_kprintf("Input like this 'motor_test dc/stepper/bldc cmd ' to call correspond functions \n");
+		rt_kprintf("Many command can be called, see details by inputting 'motor_test help'\n");
+		rt_kprintf("Hope you enjoy it!!! \n\n");
+	}
+	else if(argc == 2)
+	{
+		rt_kprintf("motor_test call formats: \n\n");
+		rt_kprintf("******************* DC motor ************************\n");
+		rt_kprintf("motor_test dc output val \n");
+		rt_kprintf("motor_test dc output_angle val \n");
+		rt_kprintf("motor_test dc get_angle \n");
+		rt_kprintf("motor_test dc get_velocity \n");
+		rt_kprintf("motor_test dc get_status \n");
+		rt_kprintf("******************* DC motor ************************\n\n");
+		rt_kprintf("******************* stepper motor ************************\n");
+		rt_kprintf("motor_test stepper output val \n");
+		rt_kprintf("motor_test stepper output_angle val \n");
+		rt_kprintf("motor_test stepper get_angle \n");
+		rt_kprintf("motor_test stepper get_velocity \n");
+		rt_kprintf("motor_test stepper get_status \n");
+		rt_kprintf("motor_test stepper trapzoid step acc dec speed \n");
+		rt_kprintf("motor_test stepper s_curve step freq_max freq_min flexible \n");
+		rt_kprintf("motor_test stepper line_interp x_pos, y_pos \n");
+		rt_kprintf("motor_test stepper circular_interp x_start y_start  x_end y_end \n");
+		rt_kprintf("******************* stepper motor ************************\n\n");
+		rt_kprintf("******************* bldc motor ************************\n");
+		rt_kprintf("motor_test bldc output val \n");
+		rt_kprintf("motor_test bldc output_angle val \n");
+		rt_kprintf("motor_test bldc get_angle \n");
+		rt_kprintf("motor_test bldc get_velocity \n");
+		rt_kprintf("motor_test bldc get_status \n");
+		rt_kprintf("******************* bldc motor ************************\n\n");
+	}
+}
+/* basic part of motor_test */
+static void _test_basic(int argc,char *argv[])
+{
+	float res;
+	rt_uint8_t status;
+	if(!rt_strcmp(argv[1],"dc") || !rt_strcmp(argv[1],"stepper") ||!rt_strcmp(argv[1],"bldc"))
+	{
+		if(argc == 3)
+		{
+			if(!rt_strcmp(argv[2],"get_angle"))
+			{
+				res = lt_motor_measure_position(motor);
+				rt_kprintf("motor angle : %.2f degree \n",res);
+			}
+			else if(!rt_strcmp(argv[2],"get_velocity"))
+			{
+				/* refresh encorder record first */
+				res = lt_motor_measure_speed(motor,SAMPLE_TIME);
+				rt_thread_mdelay(SAMPLE_TIME);
+				res = lt_motor_measure_speed(motor,SAMPLE_TIME);
+				rt_kprintf("motor speed: %.2f rad/s, %.2f rpm \n",res*2*PI,60*res);
+			}
+			else if(!rt_strcmp(argv[2],"get_status"))
+			{
+				lt_motor_control(motor,MOTOR_CTRL_GET_STATUS,&status);
+				rt_kprintf("motor status: %s \n",_status[status]);
+			}
+		}
+		else if(argc == 4)
+		{
+			res = (float)atof(argv[3]);
+			if(!rt_strcmp(argv[2],"output"))
+			{
+				lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&res);
+				rt_kprintf("motor output : %.2f \n",res);
+			}
+			else if(!rt_strcmp(argv[2],"output_angle"))
+			{
+				/* refresh encorder record first */
+				lt_motor_control(motor,MOTOR_CTRL_OUTPUT_ANGLE,&res);
+				rt_kprintf("motor output_angle: %.2f degree \n",res);
+			}
+		}
+	}
+}
+
+static void _test_stepper(int argc, char*argv[])
+{
+	static struct lt_stepper_config_accel acc_config;
+	static struct lt_stepper_config_interp int_config;
+	int_config.x_stepper = x_stepper;
+	int_config.y_stepper = y_stepper;
+	
+	if(!rt_strcmp(argv[2],"trapzoid"))
+	{
+		if(argc == 7)		/* check paramaters */
+		{
+			int step = atoi(argv[3]);
+			float acc = (float)atof(argv[4]);
+			float dec = (float)atof(argv[5]);
+			float speed = (float)atof(argv[6]);
+			acc_config.accel = acc;
+			acc_config.decel = dec;
+			acc_config.speed = speed;
+			acc_config.step = step;
+			lt_motor_control(motor,STEPPER_CTRL_TRAPZOID_ACCELERATE,&acc_config);
+		}
+	}
+	else if(!rt_strcmp(argv[2],"s_curve"))
+	{
+		if(argc == 7)		/* check paramaters */
+		{
+			int step = atoi(argv[3]);
+			float max = (float)atof(argv[4]);
+			float min = (float)atof(argv[5]);
+			float flex = (float)atof(argv[6]);
+			acc_config.step = step;
+			acc_config.freq_max = max;
+			acc_config.freq_min = min;
+			acc_config.flexible = flex;
+			lt_motor_control(motor,STEPPER_CTRL_S_CURVE_ACCELERATE,&acc_config);
+		}
+	}
+	else if(!rt_strcmp(argv[2],"line_interp"))
+	{
+		if(argc == 5)		/* check paramaters */
+		{
+			int x_pos = atoi(argv[3]);
+			int y_pos = atoi(argv[4]);
+			int_config.x_end = x_pos;
+			int_config.y_end = y_pos;
+			lt_motor_control(motor,STEPPER_CTRL_LINE_INTERPOLATION,&int_config);
+		}
+	}
+	else if(!rt_strcmp(argv[2],"circular_interp"))
+	{
+		if(argc == 7)		/* check paramaters */
+		{
+			int x_start = atoi(argv[3]);
+			int y_start = atoi(argv[4]);
+			int x_end 	= atoi(argv[5]);
+			int y_end 	= atoi(argv[6]);
+			int_config.x_start = x_start;
+			int_config.y_start = y_start;
+			int_config.x_end = x_end;
+			int_config.y_end = y_end;
+			lt_motor_control(motor,STEPPER_CTRL_CIRCULAR_INTERPOLATION,&int_config);
+		}
+	}
+}
+#endif
+#endif
+#endif
 
 
