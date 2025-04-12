@@ -5,6 +5,11 @@ static void _timer_output_angle(void *parameter)
 {
 	lt_stepper_t stepper = (lt_stepper_t)parameter;
 	rt_pwm_disable(stepper->parent.pwm,stepper->parent.pwm_channel);	/* disable pwm output */
+	if(!stepper->parent.done_call)					/* call done callback function */
+	{
+		stepper->parent.done_call(RT_NULL);
+	}
+
 }
 
 static void _motor_stepper_output_angle(lt_stepper_t stepper,float angle);
@@ -14,6 +19,7 @@ static void _motor_stepper_trapzoid_accelerate(lt_stepper_t stepper,struct lt_st
 static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_stepper_config_accel* config);
 static void _motor_stepper_line_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config);
 static void _motor_stepper_circular_interp(lt_stepper_t stepper,struct lt_stepper_config_interp* config);
+static rt_uint8_t _check_pos(rt_int32_t x_start, rt_int32_t y_start, rt_int32_t x_end, rt_int32_t y_end);
 //static rt_thread_t _process;			/* process thread for acceleration and  interplation */
 
 static lt_motor_t _motor_stepper_create(char* name,rt_uint8_t reduction_ration,rt_uint8_t type)
@@ -138,6 +144,11 @@ static rt_err_t _motor_stepper_control(lt_motor_t motor, int cmd, void*arg)
 		{
 			struct lt_stepper_config_interp* config = (struct lt_stepper_config_interp*)arg;
 			_motor_stepper_circular_interp(stepper,config);
+			break;
+		}
+		case STEPPER_CTRL_SET_DONE_CALLBACK:
+		{
+			stepper->parent.done_call = (rt_err_t (*)(void*))arg;		/* set callback function for accel and interp */
 			break;
 		}
 		default:break;
@@ -309,6 +320,10 @@ rt_err_t _hw_timer_callback_trapzoid(rt_device_t dev,rt_size_t size)
 		stepper->hw_timer->user_data = stepper->parent.user_data;		/* change user_data */
 		rt_free(stepper->accel_series);									/* release memory */
 		stepper->parent.status = MOTOR_STATUS_STOP;
+		if(!stepper->parent.done_call)					/* call done callback function */
+		{
+			stepper->parent.done_call(RT_NULL);
+		}
 	}
 	else
 	{
@@ -426,6 +441,10 @@ rt_err_t _hw_timer_callback_s_curve(rt_device_t dev,rt_size_t size)
 		rt_pwm_enable(stepper->parent.pwm,stepper->parent.pwm_channel);	/*  pwm output at first */
 		rt_free(stepper->accel_series);									/* release memory */
 		stepper->parent.status = MOTOR_STATUS_RUN;
+		if(!stepper->parent.done_call)					/* call done callback function */
+		{
+			stepper->parent.done_call(RT_NULL);
+		}
 	}
 	else
 	{
@@ -474,7 +493,7 @@ static void _motor_stepper_s_curve_accelerate(lt_stepper_t stepper,struct lt_ste
 		rt_free(stepper->accel_series);				/* free malloc memory */
 	}
 	stepper->accel_series = T_nums;					/* record period series */
-	stepper->max_index = config->step;
+	stepper->max_index = config->step;				/* max step */
 	stepper->index = 0;								/* current index */
 	
 	/* open hwtimer,set timeout callback function */ 		
@@ -530,6 +549,10 @@ rt_err_t _hw_timer_callback_line_interp(rt_device_t dev,rt_size_t size)
 		rt_device_close(dev);
 		config->x_stepper->status = MOTOR_STATUS_STOP;
 		config->y_stepper->status = MOTOR_STATUS_STOP;
+		if(!config->x_stepper->done_call)	/* call done callback function */
+		{
+			config->x_stepper->done_call(RT_NULL);
+		}
 		/* change user_data */
 	}
 	if(config->deviation >= 0)
@@ -802,6 +825,10 @@ rt_err_t _hw_timer_callback_circular_interp(rt_device_t dev,rt_size_t size)
 		rt_device_close(dev);
 		config->x_stepper->status = MOTOR_STATUS_STOP;
 		config->y_stepper->status = MOTOR_STATUS_STOP;
+		if(!config->x_stepper->done_call)	/* call done callback function */
+		{
+			config->x_stepper->done_call(RT_NULL);
+		}
 	}
 	
 	if(config->dir == STEPPER_INTERP_DIR_CW)
@@ -819,7 +846,9 @@ rt_err_t _hw_timer_callback_circular_interp(rt_device_t dev,rt_size_t size)
 
 static void _motor_stepper_circular_interp(lt_stepper_t stepper, struct lt_stepper_config_interp* config)
 {
-	
+	/* check whether start pos and end pos in the same quarent and circle */
+	rt_uint8_t res = _check_pos(config->x_start,config->y_start,config->x_end,config->y_end);
+	if(!res) return;			/* the two position unvalid!!! */
 	rt_int32_t tmp1 =  config->x_start - config->x_end, tmp2 = config->y_start - config->y_end;
 	if(tmp1 < 0) tmp1 = -tmp1;
 	if(tmp2 < 0) tmp2 = -tmp2;
@@ -829,6 +858,38 @@ static void _motor_stepper_circular_interp(lt_stepper_t stepper, struct lt_stepp
 	rt_device_set_rx_indicate(stepper->hw_timer,_hw_timer_callback_circular_interp);	/* set timeout callback function */
 	_stepper_interp_config(stepper,config);							/* config interpolation  */
 	/* we should refresh start pos in each loop because we need pos info */
+}
+
+/* check whether start pos and end pos in the same quarent and circle */
+static rt_uint8_t _check_pos(rt_int32_t x_start, rt_int32_t y_start, rt_int32_t x_end, rt_int32_t y_end)
+{
+	float tmp = sqrtf(x_start*x_start + y_start*y_start);/* get radius */
+	float ref = tmp/100;
+	tmp -= sqrtf(x_end*x_end + y_end*y_end);			
+	/* if radius bias are lower than %1, we regard that two points are in the same circle */
+	if(tmp >= ref || tmp <= -ref) return 0;	
+	
+	/* x_pos has same sign? */
+	if(x_start > 0)
+	{
+		if(x_end < 0) return 0;
+	}
+	else if(x_start < 0)
+	{
+		if(x_end > 0) return 0;
+	}
+	/* y_pos has same sign? */
+	if(y_start > 0)
+	{
+		if(y_end < 0) return 0;
+	}
+	else if(y_start < 0)
+	{
+		if(y_end > 0) return 0;
+	}
+	
+	
+	return 1;
 }
 
 

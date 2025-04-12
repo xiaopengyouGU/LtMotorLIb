@@ -64,9 +64,6 @@ rt_align(RT_ALIGN_SIZE)
 
 static lt_motor_t motor;
 static rt_timer_t motor_timer;
-/* stepper for interpolation */
-static lt_motor_t x_stepper;
-static lt_motor_t y_stepper;
 
 
 #ifdef RT_USING_FINSH
@@ -359,6 +356,16 @@ void lt_motor_test(void)
 MSH_CMD_EXPORT(lt_motor_test, motor test);
 
 #ifdef STEPPER_TEST
+/* stepper for interpolation */
+static lt_motor_t x_stepper;
+static lt_motor_t y_stepper;
+static rt_sem_t sem_test;		/* semaphore for test */
+static rt_thread_t stepper_t;	
+
+rt_err_t done_callback(void *parameter)
+{
+	rt_sem_release(sem_test);
+}
 /* trapzoid accelerate */
 void stepper_trapzoid_accelerate(int step,float acc, float dec, float speed)
 {
@@ -370,6 +377,150 @@ void stepper_trapzoid_accelerate(int step,float acc, float dec, float speed)
 	/* memory must be enough for large amount of step */
 	lt_motor_control(motor,STEPPER_CTRL_TRAPZOID_ACCELERATE,&config);
 }
+
+void stepper_s_curve_accelerate(int step,float freq_max, float freq_min,float flexible)
+{
+	struct lt_stepper_config_accel config;
+	config.freq_max = freq_max;				/* unit: rad/s^2 */
+	config.freq_min = freq_max;				/* unit: rad/s^2 */
+	config.flexible = flexible;				/* unit: rad/s = 9.55rpm */
+	config.step = step;				/* unit: step, >=0 : forward , <0 : reversal */
+	/* memory must be enough for large amount of step */
+	lt_motor_control(motor,STEPPER_CTRL_S_CURVE_ACCELERATE,&config);
+}
+
+/* line interpolation test */
+void stepper_line_interp(int x_pos, int y_pos)
+{
+	struct lt_stepper_config_interp config;
+	config.x_end = x_pos;
+	config.y_end = y_pos;
+	
+}
+
+void stepper_circular_interp(int x_start, int y_start, int x_end, int y_end)
+{
+	struct lt_stepper_config_interp config;
+	config.x_start = x_start;
+	config.y_start = y_start;
+	config.x_end = x_end;
+	config.y_end = y_end;
+	
+}
+
+static void stepper_thread_entry(void *parameter)
+{
+	rt_uint8_t i;
+	float output = 360;
+	for (i = 0; i < 5; i++)			/* 5 forward rotations */
+	{
+		lt_motor_control(x_stepper,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
+		rt_thread_mdelay(500);									/* delay */
+	}
+	output = -360;
+	for (i = 0; i < 5; i++)			/* 5 reversal rotations */
+	{
+		lt_motor_control(x_stepper,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
+		rt_thread_mdelay(500);									/* delay */
+	}
+	
+	/* line interpolation path: /\ -->  ---
+								\/     |   |
+										---	
+	*/
+	rt_int32_t line_path[8][2] = {{500,800},{500,-800},{-500,-800},{-500,800},
+								  {0,1000},{1000,0},{0,-1000},{-1000,0}};
+	rt_int32_t circular_path[9][2] = {{707,0},{500,500},{0,707},{-500,500},{-707,0},{-500,-500},{0,-707},{500,-500},{0,707}};
+	/* draw a circle with radius = 707 steps */
+	struct lt_stepper_config_interp config;
+	config.x_stepper = x_stepper;
+	config.y_stepper = y_stepper;
+	/* line interp test */							  
+	for(i = 0; i < 8; i++)
+	{
+		config.x_end = line_path[i][0];
+		config.y_end = line_path[i][1];
+		lt_motor_control(x_stepper,STEPPER_CTRL_LINE_INTERPOLATION,&config);
+		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
+		rt_thread_mdelay(1000);									
+	}
+	/* circular interp test */
+	/* in this case, the circular should lie in one quadrant and interp direction should be reasonable 
+	*  eg: start:(50, 50), end:(71,0), direction should be CW since intep circular lies in 1th quadrant
+	*/
+	config.dir = STEPPER_INTERP_DIR_CCW;						/* counter clock-wise */
+	for(i = 0; i < 8; i++)
+	{
+		config.x_start = circular_path[i][0];
+		config.y_start = circular_path[i][1];
+		config.x_end = circular_path[i+1][0];
+		config.y_end = circular_path[i+1][1];
+		lt_motor_control(x_stepper,STEPPER_CTRL_CIRCULAR_INTERPOLATION,&config);
+		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
+		rt_thread_mdelay(1000);									
+	}
+	config.dir = STEPPER_INTERP_DIR_CW;						    /* clock-wise */
+	for(i = 8; i > 1; i++)
+	{
+		config.x_start = circular_path[i][0];
+		config.y_start = circular_path[i][1];
+		config.x_end = circular_path[i-1][0];
+		config.y_end = circular_path[i-1][1];
+		lt_motor_control(x_stepper,STEPPER_CTRL_CIRCULAR_INTERPOLATION,&config);
+		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
+		rt_thread_mdelay(1000);									
+	}
+	/* trapzoid accelerate */
+	struct lt_stepper_config_accel config_acc;
+	config_acc.accel = 0.002;				/* unit: rad/s^2 */
+	config_acc.decel = 0.006;				/* unit: rad/s^2 */
+	config_acc.speed = 0.4;					/* unit: rad/s = 9.55 rpm */
+	config_acc.step = 1000;					/* run 1000 step! forward rotation */
+	lt_motor_control(x_stepper,STEPPER_CTRL_TRAPZOID_ACCELERATE,&config_acc);
+	rt_sem_take(sem_test,RT_WAITING_FOREVER);	/* wait accel finish */
+	
+	config_acc.step = -1000;				/* run 1000 step! reversal speed */
+	lt_motor_control(x_stepper,STEPPER_CTRL_TRAPZOID_ACCELERATE,&config_acc);
+	rt_sem_take(sem_test,RT_WAITING_FOREVER);	/* wait accel finish */
+	/* s curve acclerate */
+	config_acc.step = 1000;
+	config_acc.freq_max = 300;					/* for stepper, 300Hz is relatively big */
+	config_acc.freq_min = 20;
+	config_acc.flexible = 2;					/* the smaller, the closer to const accel */
+	lt_motor_control(x_stepper,STEPPER_CTRL_S_CURVE_ACCELERATE,&config_acc);
+	rt_sem_take(sem_test,RT_WAITING_FOREVER);	/* wait accel finish */
+	rt_thread_mdelay(2000);						/* delay 2000ms, then rotates reversally */
+	config_acc.step = -1000;
+	lt_motor_control(x_stepper,STEPPER_CTRL_S_CURVE_ACCELERATE,&config_acc);
+}
+
+static void stepper_config(void)
+{
+	struct lt_stepper_config config;
+	rt_base_t x_pin = GET_PIN(F,8), y_pin = GET_PIN(F,11);
+	rt_base_t x_enable = GET_PIN(F,7), y_enable = GET_PIN(F,13);
+ 	x_stepper = lt_motor_create("x_stepper",1,MOTOR_TYPE_STEPPER);
+	y_stepper = lt_motor_create("y_stepper",1,MOTOR_TYPE_STEPPER);
+	/* no need to set encoder */
+	lt_motor_set_dir_pins(x_stepper,x_pin,x_pin);		/* set direction pin */
+	lt_motor_set_dir_pins(y_stepper,y_pin,y_pin);
+	/* config stepper params */
+	config.enable_pin = x_enable;
+	config.period = STEPPER_PERIOD;
+	config.stepper_angle = STEPPER_ANGLE;
+	config.subdivide = STEPPER_SUBDIVIDE;
+	//config.timer_freq = STEPPER_TIMER_FREQ;		default: 1Mhz
+	config.timer_num = STEPPER_TIMER_NUM;
+	
+	lt_motor_control(x_stepper,STEPPER_CTRL_CONFIG,&config);
+	config.enable_pin = y_enable;
+	lt_motor_control(y_stepper,STEPPER_CTRL_CONFIG,&config);
+	/* config two steppers successfully */
+	stepper_t = rt_thread_create("stepper")
+}
+
 
 /* use FINSH to help test functions */
 #ifdef RT_USING_FINSH
@@ -390,10 +541,12 @@ static void motor_test(int argc, char*argv[])
 	}
 	else
 	{
+#ifdef STEPPER_TEST
 		if(!rt_strcmp(argv[1],"stepper"))
 		{
 			_test_stepper(argc,argv);	/* stepper part of motor_test */
 		}
+#endif
 	}
 
 }

@@ -101,6 +101,7 @@ struct lt_motor_object{
 	rt_uint8_t type;
 	rt_uint8_t status;					/* motor status */
 	const struct lt_motor_ops *ops;		/* motor control operators */
+	rt_err_t (*done_call)(void*);		/* done callback function, used for accel and interp */
 	void* user_data;					
 };
 typedef struct lt_motor_object* lt_motor_t;
@@ -140,6 +141,7 @@ rt_err_t lt_motor_control(lt_motor_t, int cmd, void* arg);
 #define STEPPER_CTRL_S_CURVE_ACCELERATE		(MOTOR_CTRL_MEASURE_POSITION + 0x14)
 #define STEPPER_CTRL_LINE_INTERPOLATION		(MOTOR_CTRL_MEASURE_POSITION + 0x15)
 #define STEPPER_CTRL_CIRCULAR_INTERPOLATION	(MOTOR_CTRL_MEASURE_POSITION + 0x16)
+#define STEPPER_CTRL_SET_DONE_CALLBACK		(MOTOR_CTRL_MEASURE_POSITION + 0x17)
 
 #define TIMER_NUM_1 0x01
 #define TIMER_NUM_2 0x02
@@ -161,7 +163,7 @@ struct lt_motor_stepper_object
 	float stepper_angle;
 	rt_timer_t soft_timer;		/* inner software timer of stepper motor */
 	rt_uint32_t *accel_series;	/* accelerate series */
-	rt_uint16_t index,max_index;/* series index */
+	rt_uint16_t index,max_index;/* series index */	
 	
 	rt_device_t hw_timer;		/* hardware timer */
 };
