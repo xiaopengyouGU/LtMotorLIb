@@ -15,7 +15,6 @@
   */ 
 
 #include "protocol.h"
-#include "drv_lcd.h"
 #include <string.h>
 #include <rtdevice.h>
 

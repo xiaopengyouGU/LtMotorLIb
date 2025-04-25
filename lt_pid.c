@@ -1,4 +1,4 @@
-#include "lt_motor_control.h"
+#include "ltmotorlib.h"
 
 lt_pid_t lt_pid_create(float Kp, float Ki, float Kd, float dt_ms)
 {
@@ -78,28 +78,19 @@ float lt_pid_get_control(lt_pid_t pid)
 float lt_pid_control(lt_pid_t pid,float curr_val)
 {
 	RT_ASSERT(pid != RT_NULL);
+	float P,I,D;
 	pid->err = pid->target_val - curr_val;
 	pid->integral += pid->err;
 	
-	if(pid->integral >= pid->int_limit)		/* anti-windup */
-	{
-		pid->integral = pid->int_limit;
-	}
-	else if(-pid->integral >= pid->int_limit)
-	{
-		pid->integral = -pid->int_limit;
-	}
+	/* anti-windup */
+	pid->integral = _constrains(pid->integral,pid->int_limit,-pid->int_limit);
 	/* output limit */
-	pid->control_u = pid->Kp*pid->err + pid->Ki*pid->integral*pid->dt + pid->Kd*(pid->err - pid->err_prev)/pid->dt;
-	if(pid->control_u >= pid->output_limit)
-	{
-		pid->control_u = pid->output_limit;
-	}
-	else if(-pid->control_u >= pid->output_limit)
-	{
-		pid->control_u = -pid->output_limit;
-	}
+	P = pid->Kp*pid->err;
+	I = pid->Ki*pid->integral*pid->dt;
+	D = pid->Kd*(pid->err - pid->err_prev)/pid->dt;
 	
+	pid->control_u = P + I + D;
+	pid->control_u = _constrains(pid->control_u,pid->output_limit,-pid->output_limit);
 	pid->err_prev = pid->err;
 	
 	return pid->control_u;
@@ -109,22 +100,18 @@ float lt_pid_incre_control(lt_pid_t pid, float curr_val)
 {
 	RT_ASSERT(pid != RT_NULL);
 	pid->err = pid->target_val - curr_val;
-	
-	float increment = pid->Kp*(pid->err - pid->err_prev)+ pid->Ki*pid->err*pid->dt + pid->Kd*(pid->err - 2*pid->err_prev + pid->err_last)/pid->dt;
+	float P,I,D,increment;
+	P = pid->Kp*(pid->err - pid->err_prev);
+	I = pid->Ki*pid->err*pid->dt;
+	D =  pid->Kd*(pid->err - 2*pid->err_prev + pid->err_last)/pid->dt;
+	increment = P + I + D;
 	
 	pid->err_last = pid->err_prev;
 	pid->err_prev = pid->err;
 	
 	pid->control_u += increment;
 	/* output limit */
-	if(pid->control_u >= pid->output_limit)
-	{
-		pid->control_u = pid->output_limit;
-	}
-	else if(-pid->control_u >= pid->output_limit)
-	{
-		pid->control_u = -pid->output_limit;
-	}
+	pid->control_u = _constrains(pid->control_u,pid->output_limit,-pid->output_limit);
 	
 	return pid->control_u;
 }
