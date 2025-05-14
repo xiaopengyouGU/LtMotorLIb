@@ -41,30 +41,12 @@ rt_err_t lt_driver_set_pins(lt_driver_t driver,rt_base_t forward_pin,rt_base_t r
 	return driver->ops->set_pins(driver);
 }
 
-rt_err_t lt_driver_set_pwm(lt_driver_t driver,rt_uint8_t pwm_num,rt_uint8_t pwm_channel,rt_uint8_t phase)
+rt_err_t lt_driver_set_pwm(lt_driver_t driver,char* pwm_name,rt_uint8_t pwm_channel,rt_uint8_t phase)
 {
 	RT_ASSERT(driver != RT_NULL);
 	struct rt_device_pwm* pwm;
-	switch(pwm_num)
-	{
-		case PWM_NUM_1:
-			pwm = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME_1);
-			break;
-		case PWM_NUM_2:
-			pwm = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME_2);
-			break;
-		case PWM_NUM_3:
-			pwm = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME_3);
-			break;
-		case PWM_NUM_4:
-			pwm = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME_4);
-			break;
-		case PWM_NUM_5:
-			pwm = (struct rt_device_pwm *)rt_device_find(PWM_DEV_NAME_5);
-			break;
-		default: break;
-	}
-
+	
+	pwm = (struct rt_device_pwm *)rt_device_find(pwm_name);
 	if(pwm != RT_NULL)
 	{
 		rt_pwm_disable(pwm,pwm_channel);
@@ -94,61 +76,41 @@ rt_err_t lt_driver_set_pwm(lt_driver_t driver,rt_uint8_t pwm_num,rt_uint8_t pwm_
 	return RT_EOK;
 }
 
-rt_err_t lt_driver_set_output(lt_driver_t driver,rt_uint32_t period,float duty_cycle,rt_uint8_t phase)
+rt_err_t lt_driver_set_output(lt_driver_t driver,rt_uint32_t period,float duty_cycle)
 {
 	RT_ASSERT(driver != RT_NULL);
-	struct rt_device_pwm *pwm;
-	rt_uint8_t channel;			
-	if(duty_cycle > 1) duty_cycle = 1;
-	else if(duty_cycle < 0) duty_cycle = 0;
-	
+	struct rt_device_pwm *pwm = driver->pwm_A;
+	rt_uint8_t channel = driver->pwm_channel_A;			
+	duty_cycle = _constrains(duty_cycle,0,1);
 	period = period*1000;		/* unit: us-> ns */
 	rt_uint32_t pulse = (rt_uint32_t)(period*duty_cycle);
 	
-	switch(phase)
-	{
-		case PWM_PHASE_DEFAULT:
-		{
-			if(driver->pwm_A != RT_NULL && driver->pwm_channel_A != RT_NULL)
-			{
-				pwm = driver->pwm_A;
-				channel = driver->pwm_channel_A;
-			}
-			break;
-		}
-		case PWM_PHASE_A:
-		{
-			if(driver->pwm_A != RT_NULL && driver->pwm_channel_A != RT_NULL)
-			{
-				pwm = driver->pwm_A;
-				channel = driver->pwm_channel_A;
-			}
-			break;
-		}
-		case PWM_PHASE_B:
-		{
-			if(driver->pwm_B != RT_NULL && driver->pwm_channel_B != RT_NULL)
-			{
-				pwm = driver->pwm_B;
-				channel = driver->pwm_channel_B;
-			}
-			break;
-		}
-		case PWM_PHASE_C:
-		{
-			if(driver->pwm_C != RT_NULL && driver->pwm_channel_C != RT_NULL)
-			{
-				pwm = driver->pwm_C;
-				channel = driver->pwm_channel_C;
-			}
-			break;
-		}
-		default: break;
-	}
 	rt_pwm_disable(pwm,channel);							/* disable pwm first */
 	rt_pwm_set(pwm,channel,period,pulse);					/* set pwm output */
 	
 	return RT_EOK;
+}
+
+rt_err_t lt_driver_3pwm_output(lt_driver_t driver,rt_uint32_t period,float dutyA,float dutyB, float dutyC)
+{
+	RT_ASSERT(driver != RT_NULL);
+	RT_ASSERT(driver->ops!= RT_NULL);
+	RT_ASSERT(driver->ops->enable != RT_NULL);
+	if(driver->pwm_A == RT_NULL || driver->pwm_channel_A == RT_NULL)	return RT_ERROR;
+	if(driver->pwm_B == RT_NULL || driver->pwm_channel_B == RT_NULL)	return RT_ERROR;
+	if(driver->pwm_C== RT_NULL  || driver->pwm_channel_C == RT_NULL)	return RT_ERROR;
+	dutyA = _constrains(dutyA,0,1);
+	dutyB = _constrains(dutyB,0,1);
+	dutyC = _constrains(dutyC,0,1);
+	
+	period = period*1000;		/* unit: us-> ns */
+	driver->ops->disable(driver);			/* disable output first */			
+	/* set pwm output */
+	rt_pwm_set(driver->pwm_A,driver->pwm_channel_A,period,(rt_uint32_t)(dutyA*period));
+	rt_pwm_set(driver->pwm_B,driver->pwm_channel_B,period,(rt_uint32_t)(dutyB*period));
+	rt_pwm_set(driver->pwm_C,driver->pwm_channel_C,period,(rt_uint32_t)(dutyC*period));
+	
+	return driver->ops->enable(driver,0);
 }
 
 rt_err_t lt_driver_enable(lt_driver_t driver,rt_uint8_t dir)

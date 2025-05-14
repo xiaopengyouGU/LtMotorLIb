@@ -4,8 +4,6 @@
 #include <rtthread.h>
 #include <rtdevice.h>
 #include "lt_def.h"
-#define GET_BIT(x,pos)		(1 & (x >> pos) )
-void lt_motor_test(void);
 /* declare special motor operators */
 extern char* _status[4];
 extern char* _type[4];
@@ -16,10 +14,17 @@ extern struct lt_motor_ops _motor_stepper_ops;
 /************************* common functions ************************************/
 float _constrains(float val, float up_limit, float down_limit);
 float _constrains_dead_region(float val,float up_limit, float down_limit);
-rt_uint8_t _get_rotation_dir(float *input);			
-rt_uint8_t _get_quard(rt_int32_t x_pos, rt_int32_t y_pos);
+rt_uint8_t _get_rotation_dir(float input);			
+rt_uint8_t _get_quard(int x_pos, int y_pos, rt_uint8_t dir);
 /* check whether start pos and end pos in the same quarent and circle */
-rt_uint8_t _check_pos(rt_int32_t x_start, rt_int32_t y_start, rt_int32_t x_end, rt_int32_t y_end);
+rt_uint8_t _check_circular_pos(int x_start, int y_start, int x_end, int y_end);
+rt_uint8_t _get_center(int x_start, int y_start, int x_end, int y_end,rt_uint16_t r, rt_uint8_t dir, float*x_center, float* y_center);
+rt_uint8_t _check_end(int x_pos, int y_pos, int x_target, int y_target,rt_uint8_t exact);
+rt_int32_t _get_count(float curr, float last,rt_int32_t count, rt_uint8_t volt);
+int _abs(int i);
+int _abs_plus_1(int i,rt_uint8_t dir);
+int _abs_sub_1(int i);
+float _absf(float i);
 /************************* common functions ************************************/
 
 /*******************************************************************************/
@@ -40,9 +45,94 @@ float lt_filter_process(lt_filter_t,float value);
 rt_err_t lt_filter_delete(lt_filter_t);
 
 /*******************************************************************************/
+/* curve generator */
+#define CURVE_TYPE_TRAPZOID		0x01
+#define CURVE_TYPE_S_CURVE		0x02
+#define CURVE_TYPE_5_SECTION	0x03
+struct lt_curve_config
+{
+	float initial;
+	float target;
+	float flexible;
+	int step;
+	float acc;
+	float dec;
+	rt_uint8_t type;
+};
+/* this curve generator provides a velocity table whose unit is us coresponding to Hz 
+*  user should release memeory by hand 
+*/
+struct lt_curve_generator_object
+{
+	float* T_nums;				
+	rt_uint16_t step;
+	rt_uint16_t acc_step;
+	rt_uint16_t dec_start;
+	rt_uint8_t curr_step;			/* current step */
+	rt_uint8_t flag;				/* 0: part velocity table, 1: full velocity table */
+};
+typedef struct lt_curve_generator_object* lt_curve_t;
+
+lt_curve_t lt_curve_create(void);
+rt_err_t lt_curve_set(lt_curve_t curve,struct lt_curve_config* config);
+rt_uint32_t lt_curve_process(lt_curve_t curve);
+rt_err_t lt_curve_release(lt_curve_t curve);
+rt_err_t lt_curve_restart(lt_curve_t curve);				/* use same velocity table */
+rt_err_t lt_curve_delete(lt_curve_t curve);
 
 /*******************************************************************************/
+/*****************************************************************************************************/
+/* interp object */
+#define INTERP_TYPE_LINE		0x01
+#define INTERP_TYPE_CURCULAR	0x02
+
+#define DIR_CW					0x00
+#define DIR_CCW					0x01
+#define INTERP_STOP				0x00
+#define X_MOTOR_MOVE			0x01
+#define Y_MOTOR_MOVE			0x02
+
+struct lt_interp_object
+{
+	int x_pos;					/* current pos */
+	int y_pos;
+	int x_trans;				/* int line interp, trans means start, int circular interp, trans means circle center */			
+	int y_trans;
+	int x_end;					/* target position */
+	int y_end;
+	int deviation;				/* position deviation */
+	rt_uint8_t dir;				/* interpolation direction, 0: clockwise, 1: counter-clockwise */
+	rt_uint16_t num_pulse;		/* total pulse number */
+	rt_uint8_t quadrant;		/* quadrant */
+	rt_uint16_t radius;			/* 0: line interp, others: circular interp */
+	rt_uint8_t exact;			/* in circular interp, 0: can't reach exact pos, 1: can reach exact pos */
+};
+typedef struct lt_interp_object* lt_interp_t;
+/* this curve generator provides a velocity table whose unit is us coresponding to Hz 
+*  user should release memeory by hand 
+*/
+
+struct lt_interp_config
+{
+	int x_start;
+	int y_start;
+	int x_end;
+	int y_end;
+	rt_uint16_t radius;			/* 0: line interp, others: circular interp */
+	rt_uint8_t dir;				/* interpolation direction, 0: clockwise, 1: counter-clockwise */
+	//void* x_motor;			
+	void* y_motor;
+};
+
+lt_interp_t lt_interp_create(void);
+rt_err_t lt_interp_set(lt_interp_t interp,struct lt_interp_config* config);
+rt_uint8_t lt_interp_process(lt_interp_t interp,rt_uint8_t*dir);
+rt_err_t lt_interp_delete(lt_interp_t curve);
+/*********************************************************************************************************/
 /* define pid object */
+#define PID_TYPE_VEL	0x01
+#define PID_TYPE_POS	0x02
+
 struct lt_pid_object
 {
 	float target_val;		
@@ -55,8 +145,18 @@ struct lt_pid_object
 	float dt;			/* sample time */
 	float int_limit;	/* integral limit */
 	float output_limit;	/* output limit */	
+	void* user_data;	
 };
 typedef struct lt_pid_object* lt_pid_t;
+/* pid info for communicating with upper computer */
+struct lt_pid_info 
+{
+	float Kp;
+	float Ki;
+	float Kd;
+	float target;		/* target */
+	float dt;			/* sample time, unit: ms */
+};
 
 lt_pid_t lt_pid_create(float Kp, float Ki, float Kd, float dt);
 rt_err_t lt_pid_delete(lt_pid_t pid);
@@ -71,10 +171,8 @@ void lt_pid_set_int_limit(lt_pid_t pid,float limit);		/* set integral limit */
 float lt_pid_get_control(lt_pid_t pid);
 float lt_pid_control(lt_pid_t pid,float curr_val);
 float lt_pid_incre_control(lt_pid_t pid, float curr_val);
+
 /*******************************************************************************/
-
-
-/***********************************************************/
 /* driver part */
 #define DRIVER_TYPE_UNKNOWN		0x00
 #define DRIVER_TYPE_DC			0x01
@@ -85,25 +183,11 @@ float lt_pid_incre_control(lt_pid_t pid, float curr_val);
 #define ROT_REVERSAL			0x02
 #define ROT_DEFAULT				0x00
 
-#define PWM_NUM_1 0x01
-#define PWM_NUM_2 0x02
-#define PWM_NUM_3 0x03
-#define PWM_NUM_4 0x04
-#define PWM_NUM_5 0x05
-#define PWM_CHANNEL_1 0x01
-#define PWM_CHANNEL_2 0x02
-#define PWM_CHANNEL_3 0x03
-#define PWM_CHANNEL_4 0x04
 
 #define PWM_PHASE_DEFAULT	0x00
 #define PWM_PHASE_A	  		0x01
 #define PWM_PHASE_B	  		0x02
 #define PWM_PHASE_C	  		0x03
-
-#define FLAG_DEFAULT			0x00
-#define FLAG_CONFIG				0x01
-#define FLAG_CONFIG_ACC			0x02
-#define FLAG_CONFIG_INTERP		0x04
 
 struct lt_driver_object
 {
@@ -135,35 +219,28 @@ struct lt_driver_ops
 
 lt_driver_t lt_driver_create(rt_uint8_t type);
 rt_err_t lt_driver_set_pins(lt_driver_t driver,rt_base_t forward_pin,rt_base_t reversal_pin,rt_base_t enable_pin);
-rt_err_t lt_driver_set_pwm(lt_driver_t driver,rt_uint8_t pwm_num,rt_uint8_t pwm_channel,rt_uint8_t phase);
-rt_err_t lt_driver_set_output(lt_driver_t driver,rt_uint32_t period,float duty_cycle,rt_uint8_t phase);
+rt_err_t lt_driver_set_pwm(lt_driver_t driver,char* pwm_name,rt_uint8_t pwm_channel,rt_uint8_t phase);
+rt_err_t lt_driver_set_output(lt_driver_t driver,rt_uint32_t period,float duty_cycle);
+rt_err_t lt_driver_3pwm_output(lt_driver_t driver,rt_uint32_t period,float dutyA,float dutyB, float dutyC);
 rt_err_t lt_driver_enable(lt_driver_t driver,rt_uint8_t dir);
 rt_err_t lt_driver_disable(lt_driver_t driver);
 rt_err_t lt_driver_delete(lt_driver_t driver);
 
 /*********************************************************/
 /* sensor part */
-#define SENSOR_TYPE_ENCODER		0x01
-#define SENSOR_TYPE_MAGNETIC	0x02
-#define SENSOR_TYPE_HALL		0x03
-#define SENSOR_TYPE_UNKNOWN		0x00
-
-#define SENSOR_NUM_ENCODER_1 0x01
-#define SENSOR_NUM_ENCODER_2 0x02
-#define SENSOR_NUM_ENCODER_3 0x03
-#define SENSOR_NUM_ENCODER_4 0x04
-#define SENSOR_NUM_ENCODER_5 0x05
+#define SENSOR_TYPE_ENCODER			0x01
+#define SENSOR_TYPE_MAGNETIC		0x02
+#define SENSOR_TYPE_HALL			0x03
+#define SENSOR_TYPE_UNKNOWN			0x00
 
 struct lt_sensor_object
 {
 	rt_device_t dev;					
 	rt_uint8_t type;
 	rt_uint16_t resolution;
-	rt_int32_t curr_val;					/* current value  */
+	rt_int32_t count;					/* current value  */
+	float last;								/* start bias */
 	/* pins */
-	rt_base_t pin_A;
-	rt_base_t pin_B;
-	rt_base_t pin_C;
 	
 	lt_filter_t lpf;						/* low pass filter */
 	const struct lt_sensor_ops *ops;		/* sensor control operators */
@@ -173,19 +250,44 @@ typedef struct lt_sensor_object* lt_sensor_t;
 
 struct lt_sensor_ops
 {
-	lt_sensor_t (*create)(rt_uint16_t sensor_num, rt_uint16_t resolution, rt_uint8_t type);
-	rt_err_t (*set_pins)(lt_sensor_t sensor);
+	lt_sensor_t (*create)(char* sensor_name, rt_uint16_t resolution, rt_uint8_t type);
 	float (*get_angle)(lt_sensor_t sensor);
 	float (*get_velocity)(lt_sensor_t sensor,rt_uint32_t measure_time_us );
 	rt_err_t (*calibrate)(lt_sensor_t sensor);
 };
 
-lt_sensor_t lt_sensor_create(rt_uint16_t sensor_num, rt_uint16_t resolution, rt_uint8_t type);
-rt_err_t lt_sensor_set_pins(lt_sensor_t sensor,rt_base_t pin_A,rt_base_t pin_B,rt_base_t pin_C );
+lt_sensor_t lt_sensor_create(char* sensor_name, rt_uint16_t resolution, rt_uint8_t type);
 float lt_sensor_get_angle(lt_sensor_t sensor);
 float lt_sensor_get_velocity(lt_sensor_t sensor, rt_uint32_t measure_time_us);
 rt_err_t lt_sensor_calibrate(lt_sensor_t sensor);
 rt_err_t lt_sensor_delete(lt_sensor_t sensor);
+
+
+/*******************************************************************************/
+/* timer part */
+#define TIMER_TYPE_HW				0x00
+#define TIMER_TYPE_SOFT				0x01
+#define TIMER_MODE_SINGLE_SHOT		0x01
+#define TIMER_MODE_PERIODIC			0x02
+typedef struct lt_timer_object * lt_timer_t;
+struct lt_timer_object
+{
+	rt_device_t hw_timer;			/* hardware timer, high precision */
+	rt_timer_t soft_timer;			/* software timer, no number limit */
+	rt_uint32_t hw_period;			/* hardware timer period, unit: us */
+	
+	void(*soft_timeout)(lt_timer_t);/* hardware timer timeout function */
+	void(*hw_timeout)(lt_timer_t);	/* software timer timeout function */	
+	void* user_data;				/* user_data for data transport */
+};
+
+lt_timer_t lt_timer_create(char*soft_name,char* hw_name,rt_uint32_t freq);
+rt_err_t lt_timer_set(lt_timer_t timer,rt_uint32_t period, rt_uint8_t mode,rt_uint8_t type);
+rt_err_t lt_timer_set_timeout(lt_timer_t timer,void(*timeout)(lt_timer_t),rt_uint8_t type);
+rt_err_t lt_timer_period_call(lt_timer_t timer,rt_uint32_t period, void(*timeout)(lt_timer_t),void* user_data,rt_uint8_t type);
+rt_err_t lt_timer_enable(lt_timer_t timer,rt_uint8_t type);
+rt_err_t lt_timer_disable(lt_timer_t timer,rt_uint8_t type);
+rt_err_t lt_timer_delete(lt_timer_t timer);
 
 
 /*******************************************************************************/
@@ -200,7 +302,6 @@ rt_err_t lt_sensor_delete(lt_sensor_t sensor);
 #define MOTOR_STATUS_RUN				0x01
 #define MOTOR_STATUS_ACCELERATE			0x02
 #define MOTOR_STATUS_INTERP				0x04
-extern char * _status[4];
 
 /* motor control command */
 #define MOTOR_CTRL_OUTPUT				0x01
@@ -208,8 +309,9 @@ extern char * _status[4];
 #define MOTOR_CTRL_GET_STATUS			0x03
 #define MOTOR_CTRL_GET_VELOCITY			0x04
 #define MOTOR_CTRL_GET_POSITION			0x05
-#define MOTOR_CTRL_ENABLE_PID			0x06
-#define MOTOR_CTRL_DISABLE_PID			0x07
+#define MOTOR_CTRL_OUTPUT_PID			0x06
+#define MOTOR_CTRL_OUTPUT_ANGLE_PID		0x07
+#define MOTOR_CTRL_DISABLE_PID			0x08
 
 struct lt_motor_ops;
 
@@ -218,9 +320,14 @@ struct lt_motor_object{
 	
 	char  name[LT_NAME_MAX]; 
 	rt_uint8_t reduction_ratio;
-	lt_driver_t driver;	/* motor driver */
-	lt_sensor_t sensor;	/* position sensor */
+	lt_driver_t driver;					/* motor driver */
+	lt_sensor_t sensor;					/* position sensor */
+	lt_timer_t timer;					/* timer */
+	lt_pid_t pid_vel;					/* pid object for simple closed loop output */
+	lt_pid_t pid_pos;
+	
 	rt_uint8_t type;
+	rt_uint8_t pid_type;				/* used pid type: pos/vel pid */
 	rt_uint8_t status;					/* motor status */
 	
 	const struct lt_motor_ops *ops;		/* motor control operators */
@@ -249,6 +356,8 @@ lt_motor_t lt_motor_create(char* name,rt_uint8_t reduction_ration,rt_uint8_t typ
 rt_err_t lt_motor_set_driver(lt_motor_t motor, lt_driver_t driver);
 rt_err_t lt_motor_set_sensor(lt_motor_t motor, lt_sensor_t sensor);
 rt_err_t lt_motor_set_callback(lt_motor_t, rt_err_t (*callback)(void*) );
+rt_err_t lt_motor_set_pid(lt_motor_t,lt_pid_t pid,rt_uint8_t pid_type);
+rt_err_t lt_motor_set_timer(lt_motor_t motor, lt_timer_t timer);
 
 float lt_motor_get_velocity(lt_motor_t, rt_uint32_t measure_time_ms);
 float lt_motor_get_position(lt_motor_t);
@@ -266,33 +375,30 @@ rt_err_t lt_motor_delete(lt_motor_t);					/* delete a motor! */
 #define STEPPER_CTRL_GET_STATUS				MOTOR_CTRL_GET_STATUS
 #define STEPPER_CTRL_GET_VELOCITY			MOTOR_CTRL_GET_VELOCITY
 #define STEPPER_CTRL_GET_POSITION			MOTOR_CTRL_GET_POSITION
-#define STEPPER_CTRL_ENABLE_PID				MOTOR_CTRL_ENABLE_PID
-#define STEPPER_CTRL_DISABLE_PID			MOTOR_CTRL_DISABLE_PID
+#define STEPPER_CTRL_OUTPUT_PID				MOTOR_CTRL_OUTPUT_PID
+#define STEPPER_CTRL_OUTPUT_ANGLE_PID		MOTOR_CTRL_OUTPUT_ANGLE_PID
 /* basic control commanda are the same */
-#define STEPPER_CTRL_CONFIG					(STEPPER_CTRL_DISABLE_PID + 0x10)
-#define STEPPER_CTRL_TRAPZOID_ACCELERATE	(STEPPER_CTRL_DISABLE_PID + 0x13)
-#define STEPPER_CTRL_S_CURVE_ACCELERATE		(STEPPER_CTRL_DISABLE_PID + 0x14)
-#define STEPPER_CTRL_LINE_INTERPOLATION		(STEPPER_CTRL_DISABLE_PID + 0x15)
-#define STEPPER_CTRL_CIRCULAR_INTERPOLATION	(STEPPER_CTRL_DISABLE_PID + 0x16)
+#define STEPPER_CTRL_CONFIG					(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x10)
+#define STEPPER_CTRL_ACCELERATE				(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x11)
+#define STEPPER_CTRL_INTERPOLATION			(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x12)
+/* stepper flag */
+#define FLAG_STEPPER_CONFIG					0x01
+#define FLAG_STEPPER_TRAPZOID				0x02
+#define FLAG_STEPPER_S_CURVE				0x04
+#define FLAG_STEPPER_5_SECTION				0x08
 
-#define TIMER_NUM_1 0x01
-#define TIMER_NUM_2 0x02
-#define TIMER_NUM_3 0x03
-#define TIMER_NUM_4 0x04
-#define TIMER_NUM_5 0x05
-
-#define DIR_UNKNOWN	0
-#define DIR_CW		1
-#define DIR_CCW		2
 
 struct lt_motor_stepper_object
 {
 	struct lt_motor_object parent;
 	/* config structures */
-	struct lt_stepper_config *config;
-	struct lt_stepper_config_accel	*config_acc;
-	struct lt_stepper_config_interp	*config_interp;
-	rt_uint8_t config_flag;		/* config flag */
+	rt_uint16_t period;			/* pulse period  ms */
+	rt_uint16_t subdivide;		/* subdivide number */
+	float angle;				/* stepper angle, unit: degree */
+	lt_curve_t	curve;			/* accleration curve info */
+	lt_interp_t interp;			/* interp object */
+
+	rt_uint8_t flag;		/* config flag */
 	
 };
 typedef struct lt_motor_stepper_object * lt_stepper_t;
@@ -302,41 +408,7 @@ struct lt_stepper_config
 	rt_uint16_t period;			/* pulse period  ms */
 	float stepper_angle;		/* unit: degree */
 	rt_uint16_t subdivide;		/* subdivide number */
-	rt_uint8_t timer_num;		/* hardware timer num */
-	rt_uint32_t timer_freq;		/* hardware timer frequency */
-	rt_device_t hw_timer;		/* hardware timer */
 };
-
-struct lt_stepper_config_accel
-{
-	int step;					/* +: forward, -: reversal */
-	float accel;				/* accelerarte, unit : rad/s^2 */
-	float decel;				/* decelerate, unit : rad/s^2 */
-	float speed;				/* speed, unit : rad/s  */
-	float freq_max;				/* max frequency */
-	float freq_min;				/* min frequency */
-	float flexible;				/* curve shape factor: flexible = 0 --> constant accel */
-	rt_uint16_t index;	    	/* current index */
-	rt_uint16_t max_index;		/* max index */
-	rt_uint32_t *acc_series;	/* accel series */
-};
-
-struct lt_stepper_config_interp
-{
-	int x_start;
-	int y_start;
-	int x_end;
-	int y_end;
-	rt_uint8_t dir;				/* interpolation direction, 0: clockwise, 1: counter-clockwise */
-	rt_uint32_t freq;
-	rt_uint32_t num_pulse;
-	lt_motor_t x_stepper;
-	lt_motor_t y_stepper;
-	int deviation;				/* position deviation */
-	rt_uint8_t quadrant;		/* circular quadrant */
-};
-
-
 /*****************************************************************************************************/
 /* motor mananger */
 #define MANAGER_CTRL_SHOW_MOTOR			0x00
@@ -366,13 +438,69 @@ rt_err_t lt_manager_delete_motor(lt_motor_t motor);
 lt_motor_t lt_manager_get_motor(char* name);
 rt_err_t lt_manager_delete(void);
 /*****************************************************************************************************/
+#ifdef LT_USING_MOTOR_MSH_TEST
+/* test example functions */
 void test_motor_output(lt_motor_t motor,float val);
 void test_motor_output_angle(lt_motor_t motor, float val);
+void test_motor_output_pid(lt_motor_t motor, float input);
+void test_motor_output_angle_pid(lt_motor_t motor, float input);
 void test_motor_get_position(lt_motor_t motor);
 void test_motor_get_velocity(lt_motor_t motor);
 void test_stepper_trapzoid(lt_motor_t motor, int step,float acc, float dec,float speed);
-void test_stepper_s_curve(lt_motor_t motor, int step, float freq_max, float freq_min, float flexible);
-void test_stepper_line_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_pos, int y_pos);
-void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_start, int y_start, int x_end, int y_end, rt_uint8_t dir);
+void test_stepper_s_curve(lt_motor_t motor, int step, float acc_t, float freq_max, float freq_min, float flexible);
+void test_stepper_5_section(lt_motor_t motor,int step,float acc_t, float speed);
+void test_stepper_line_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_pos, int y_pos,int x_end, int y_end);
+void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_start, int y_start, int x_end, int y_end, rt_uint16_t radius,rt_uint8_t dir);
+
+rt_err_t test_motor_dc_config(void);
+rt_err_t test_stepper_x_config(void);
+rt_err_t test_stepper_y_config(void);
+rt_err_t test_close_loop_pid(lt_motor_t motor,lt_timer_t timer,lt_pid_t pid_vel,lt_pid_t pid_pos,void(*timeout)(lt_timer_t));
+#endif
+/*****************************************************************************************************/
+/* communicate with upper computer to operate motor pid control */
+struct lt_communicator_object	
+{
+	rt_device_t dev;					/* process device */
+	rt_thread_t thread;					/* receive thread */
+	struct rt_semaphore rx_sem;    		/* semaphore for read */
+	rt_uint8_t* buffer;					/* read buffer */
+	rt_size_t buf_size;					/* buffer size */
+	
+	const struct lt_commun_ops* ops;	/* operators */
+};
+typedef struct lt_communicator_object* lt_commun_t;
+
+struct lt_commun_ops
+{
+	void(*send)(lt_commun_t communicator,int cmd,rt_uint8_t channel,void*data,rt_uint8_t num);
+	rt_uint8_t(*process)(lt_commun_t communicator,void* info);
+	void(*data_recv)(lt_commun_t communicator,rt_uint8_t* data, rt_uint16_t length);
+};
+
+
+void lt_communicator_send(int cmd,rt_uint8_t channel,void*data,rt_uint8_t num);
+void lt_communicator_set(char* serial,rt_size_t buf_size,struct lt_commun_ops* ops);
+rt_uint8_t lt_communicator_receive(void*info);
+rt_err_t lt_communicator_delete(void);
+
+
+/***********************************************************************************/
+/* foc object */
+struct lt_foc_object
+{
+	float fa;				/* A phase */
+	float fb;				/* B phase */
+	float fc;				/* C phase */
+	float max_val;						
+};
+typedef struct lt_foc_object* lt_foc_t;
+
+lt_foc_t lt_foc_create(float max_val);
+void lt_foc_set_maxval(lt_foc_t foc,float max_val);
+void lt_foc_process(lt_foc_t foc, float angle_el, float fd, float fq);
+void lt_foc_map_duty(lt_foc_t foc,float* dutyA, float* dutyB,float* dutyC);
+rt_err_t lt_foc_delete(lt_foc_t foc);
+
 
 #endif

@@ -2,13 +2,14 @@
 
 struct lt_driver_ops _driver_dc_ops;
 
-static void _driver_dc_set_pins(lt_driver_t driver)
+static rt_err_t _driver_dc_set_pins(lt_driver_t driver)
 {
 	rt_pin_mode(driver->forward_pin,PIN_MODE_OUTPUT);
 	rt_pin_mode(driver->reversal_pin,PIN_MODE_OUTPUT);
+	return RT_EOK;
 }
 
-static void _driver_dc_enable(lt_driver_t driver,rt_uint8_t dir)
+static rt_err_t _driver_dc_enable(lt_driver_t driver,rt_uint8_t dir)
 {
 	if(dir == ROT_FORWARD)
 	{
@@ -21,14 +22,14 @@ static void _driver_dc_enable(lt_driver_t driver,rt_uint8_t dir)
 		rt_pin_write(driver->reversal_pin,PIN_HIGH);
 	}
 	
-	rt_pwm_enable(driver->pwm_A,driver->pwm_channel_A);
+	return rt_pwm_enable(driver->pwm_A,driver->pwm_channel_A);
 }
 
-static void _driver_dc_disable(lt_driver_t driver)
+static rt_err_t _driver_dc_disable(lt_driver_t driver)
 {
 	rt_pin_write(driver->forward_pin,PIN_LOW);
 	rt_pin_write(driver->reversal_pin,PIN_LOW);
-	rt_pwm_disable(driver->pwm_A,driver->pwm_channel_A);
+	return rt_pwm_disable(driver->pwm_A,driver->pwm_channel_A);
 }
 
 struct lt_driver_ops _driver_dc_ops = {  _driver_dc_set_pins,

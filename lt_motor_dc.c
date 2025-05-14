@@ -58,7 +58,8 @@ struct lt_motor_ops _motor_dc_ops = {
 static void _motor_dc_output(lt_motor_t motor, float input)
 {
 	float duty_cycle;	
-	rt_uint8_t dir = _get_rotation_dir(&input);	/* get rotation direction and change sign of input if input < 0 */
+	rt_uint8_t dir = _get_rotation_dir(input);	/* get rotation direction */
+	input = _absf(input);
 	/* check input boundary with dead region */
 	input = _constrains_dead_region(input,MOTOR_MAX_SPEED,MOTOR_MIN_SPEED);
 	
@@ -70,7 +71,7 @@ static void _motor_dc_output(lt_motor_t motor, float input)
 	else
 	{
 		duty_cycle = input/MOTOR_MAX_SPEED;
-		lt_driver_set_output(motor->driver,MOTOR_PERIOD,duty_cycle,0);
+		lt_driver_set_output(motor->driver,MOTOR_PERIOD,duty_cycle);
 		lt_driver_enable(motor->driver,dir);/* enable output */
 		motor->status = MOTOR_STATUS_RUN;	/* change motor status */
 	}
@@ -92,9 +93,7 @@ static void _motor_dc_output_angle(lt_motor_t motor,float angle)
 	/* transform angle to pulse */
 	angle = MOTOR_ANGLE_BASE + (angle/MOTOR_MAX_ANGLE)*MOTOR_ANGLE_PERIOD/10;		    /* correspond to 0.5ms - 2.5ms */
 	angle /= MOTOR_ANGLE_PERIOD;														/* get duty_cycle */
-	lt_driver_set_output(motor->driver,MOTOR_ANGLE_PERIOD,angle,0);
+	lt_driver_set_output(motor->driver,MOTOR_ANGLE_PERIOD,angle);
 	lt_driver_enable(motor->driver,0);	/* enable output */
 	motor->status = MOTOR_STATUS_RUN;	 			/* change motor status */
 }
-
-

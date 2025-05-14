@@ -1,29 +1,42 @@
 #ifndef __LT_DEF_H__
 #define __LT_DEF_H__
 
+#define SQRT_3						1.73205
+#define GET_BIT(x,pos)		(1 & (x >> pos) )
+
 #define LT_NAME_MAX					RT_NAME_MAX + 2
 #define LT_USING_MOTOR_MSH_TEST
 #define PI							3.141593
 #define PID_INTEGRAL_LIMIT			6000
 #define PID_OUTPUT_LIMIT			2000
+#define PID_POS_CONST				0.01f
+#define PID_VEL_CONST				0.1f
 
-#define ENCODER_DEV_NAME_1	"pulse4"
-#define ENCODER_DEV_NAME_2    "pulse4"	
-#define ENCODER_DEV_NAME_3	"pulse4"
-#define ENCODER_DEV_NAME_4	"pulse4"
-#define ENCODER_DEV_NAME_5	"pulse4"
+#define ENCODER_NAME_1			"pulse4"
+#define ENCODER_NAME_2  		"pulse4"	
+#define ENCODER_NAME_3			"pulse4"
+#define ENCODER_NAME_4			"pulse4"
+#define ENCODER_NAME_5			"pulse4"
 
-#define PWM_DEV_NAME_1				"pwm2"
-#define PWM_DEV_NAME_2				"pwm2"
-#define PWM_DEV_NAME_3				"pwm2"
-#define PWM_DEV_NAME_4				"pwm2"
-#define PWM_DEV_NAME_5				"pwm2"
+#define I2C_NAME_1				"i2c1"
+#define I2C_NAME_2				"i2c2"
+#define I2C_NAME_3				"i2c2"
+#define I2C_NAME_4				"i2c2"
+#define I2C_NAME_5				"i2c2"
 
-#define TIMER_DEV_NAME_1			"timer2"
-#define TIMER_DEV_NAME_2			"timer2"
-#define TIMER_DEV_NAME_3			"timer2"
-#define TIMER_DEV_NAME_4			"timer2"
-#define TIMER_DEV_NAME_5			"timer2"
+
+#define PWM_NAME_1				"pwm2"
+#define PWM_NAME_2				"pwm2"
+#define PWM_NAME_3				"pwm2"
+#define PWM_NAME_4				"pwm2"
+#define PWM_NAME_5				"pwm2"
+
+#define TIMER_NAME_1			"timer11"
+#define TIMER_NAME_2			"timer13"
+#define TIMER_NAME_3			"timer14"
+#define TIMER_NAME_4			"timer11"
+#define TIMER_NAME_5			"timer11"
+
 /* DC motor definition parameter */
 #define MOTOR_PERIOD				100		    /* 0.1ms, unit: us */
 #define MOTOR_MAX_SPEED				100			/* DC motor maximum speed */

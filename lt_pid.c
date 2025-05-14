@@ -4,6 +4,7 @@ lt_pid_t lt_pid_create(float Kp, float Ki, float Kd, float dt_ms)
 {
 	lt_pid_t pid;
 	pid = rt_malloc(sizeof(struct lt_pid_object));
+	if(pid == RT_NULL) return RT_NULL;
 	rt_memset(pid,0,sizeof(struct lt_pid_object));
 	pid->Kp = Kp;
 	pid->Ki = Ki;

@@ -16,65 +16,12 @@
 
 #include "protocol.h"
 #include <string.h>
-#include <rtdevice.h>
+#include "ltmotorlib.h"
 
-static rt_device_t serial;
-static rt_thread_t serial_rx;
-static struct rt_semaphore rx_sem;    /* semaphore for read */
 
 static struct prot_frame_parser_t parser;
 
 static rt_uint8_t recv_buf[PROT_FRAME_LEN_RECV];
-
-
-static rt_err_t rx_ind(rt_device_t dev, rt_size_t size)
-{
-	if(size > 0)
-	rt_sem_release(&rx_sem);
-	return RT_EOK;
-}
-
-/* 接收数据的线程 */
-static void serial_thread_entry(void *parameter)
-{
-    rt_uint8_t ch;
-    while (1)
-    {
-       rt_sem_take(&rx_sem, RT_WAITING_FOREVER);
-        // 循环读取所有可用数据
-        while (rt_device_read(serial, -1, &ch, 1) == 1) {
-            protocol_data_recv(&ch, 1); // 逐字节处理
-        }
-    }
-}
-
-/**
- * @brief   初始化接收协议
- * @param   void
- * @return  初始化结果.
- */
-int32_t protocol_init(void)
-{
-	memset(&parser, 0, sizeof(struct prot_frame_parser_t));
-    
-    /* 初始化分配数据接收与解析缓冲区*/
-    parser.recv_ptr = recv_buf;
-	/* find UART device */
-	serial = rt_device_find("uart1");
-	if(serial == RT_NULL)
-		rt_kprintf("init protocol faild!\n ");
-	else
-		rt_device_open(serial,RT_DEVICE_FLAG_INT_RX);
-	//rt_device_open(serial,RT_DEVICE_FLAG_INT_RX | RT_DEVICE_FLAG_INT_TX)
-	rt_device_set_rx_indicate(serial,rx_ind);	/* set read callback function */
-	/* init semaphore */
-    rt_sem_init(&rx_sem, "rx_sem", 0, RT_IPC_FLAG_FIFO);
-	serial_rx = rt_thread_create("serial_rx",serial_thread_entry,RT_NULL,256,3,20);
-	if(serial_rx != RT_NULL)
-		rt_thread_startup(serial_rx);
-    
-	return RT_EOK;
-}
 
 
 /**
@@ -322,8 +269,33 @@ void protocol_data_recv(uint8_t *data, uint16_t data_len)
   * @param num：参数个数
   * @retval 无
   */
-void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num)
+//void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num)
+//{
+//	uint8_t sum = 0;    // 校验和
+//	num *= 4;           // 一个参数 4 个字节
+//  
+//	static packet_head_t set_packet;
+//	  
+//	set_packet.head = FRAME_HEADER;     // 包头 0x59485A53
+//	set_packet.len  = 0x0B + num;      // 包长
+//	set_packet.ch   = ch;              // 设置通道
+//	set_packet.cmd  = cmd;             // 设置命令
+//	  
+//	sum = check_sum(0, (uint8_t *)&set_packet, sizeof(set_packet));       // 计算包头校验和
+//	sum = check_sum(sum, (uint8_t *)data, num);                           // 计算参数校验和
+//  /* here we use UART device to operate UART */
+//	
+//	rt_device_write(serial,0,(rt_uint8_t *)&set_packet,sizeof(set_packet));	//send frame header
+//	rt_device_write(serial,0,(rt_uint8_t *)data,num);						//send data
+//	rt_device_write(serial,0,(rt_uint8_t *)&sum,sizeof(sum));				//send check_sum
+//	
+////  HAL_UART_Transmit(&UartHandle, (uint8_t *)&set_packet, sizeof(set_packet), 0xFFFFF);    // 发送数据头
+////	HAL_UART_Transmit(&UartHandle, (uint8_t *)data, num, 0xFFFFF);                          // 发送参数
+////	HAL_UART_Transmit(&UartHandle, (uint8_t *)&sum, sizeof(sum), 0xFFFFF);                  // 发送校验和
+//}
+static void _protocol_send(lt_commun_t communicator,int cmd,rt_uint8_t channel,void*data,rt_uint8_t num)
 {
+	rt_device_t  serial = communicator->dev;								/* get serial device */
 	uint8_t sum = 0;    // 校验和
 	num *= 4;           // 一个参数 4 个字节
   
@@ -331,20 +303,78 @@ void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num)
 	  
 	set_packet.head = FRAME_HEADER;     // 包头 0x59485A53
 	set_packet.len  = 0x0B + num;      // 包长
-	set_packet.ch   = ch;              // 设置通道
+	set_packet.ch   = channel;              // 设置通道
 	set_packet.cmd  = cmd;             // 设置命令
 	  
 	sum = check_sum(0, (uint8_t *)&set_packet, sizeof(set_packet));       // 计算包头校验和
 	sum = check_sum(sum, (uint8_t *)data, num);                           // 计算参数校验和
-  /* here we use UART device to operate UART */
-	
-	rt_device_write(serial,0,(rt_uint8_t *)&set_packet,sizeof(set_packet));	//send frame header
-	rt_device_write(serial,0,(rt_uint8_t *)data,num);						//send data
-	rt_device_write(serial,0,(rt_uint8_t *)&sum,sizeof(sum));				//send check_sum
+	/* serial device operation */
+	rt_device_write(serial,0,(rt_uint8_t *)&set_packet,sizeof(set_packet));	/* send frame header */
+	rt_device_write(serial,0,(rt_uint8_t *)data,num);						/* send data */
+	rt_device_write(serial,0,(rt_uint8_t *)&sum,sizeof(sum));				/* send check_sum */
 	
 //  HAL_UART_Transmit(&UartHandle, (uint8_t *)&set_packet, sizeof(set_packet), 0xFFFFF);    // 发送数据头
 //	HAL_UART_Transmit(&UartHandle, (uint8_t *)data, num, 0xFFFFF);                          // 发送参数
 //	HAL_UART_Transmit(&UartHandle, (uint8_t *)&sum, sizeof(sum), 0xFFFFF);                  // 发送校验和
 }
+static rt_uint8_t _protocol_process(lt_commun_t communicator,void* info)
+{
+	struct lt_pid_info* _info = (struct lt_pid_info*)info;		/* default info type */
+	rt_uint16_t length = communicator->buf_size;
+	rt_uint8_t* frame_data = communicator->buffer;
+	rt_uint8_t cmd_type = protocol_frame_parse(frame_data, &length);
+	switch (cmd_type)
+    {
+      case SET_PID_CMD:
+      {
+        _info->Kp = COMPOUND_32BIT(&frame_data[13]);
+        _info->Ki = COMPOUND_32BIT(&frame_data[17]);
+        _info->Kd = COMPOUND_32BIT(&frame_data[21]);
+		break;
+      }
+      case SET_TARGET_CMD:
+      {
+		_info->target = COMPOUND_32BIT(&frame_data[13]);    	/* get data */
+		break;
+      }
+	  case SET_PERIOD_CMD:
+      {
+        _info->dt = COMPOUND_32BIT(&frame_data[13]);     		/* set timer period 1~1000ms */
+      }
+      break;
+    }
+	return cmd_type;
+}
+static void _protocol_data_recv(lt_commun_t communicator,rt_uint8_t* data, rt_uint16_t length)
+{
+	protocol_data_recv(data,length);
+}
+
+static struct lt_commun_ops _ops = {	_protocol_send,									
+										_protocol_process,
+										_protocol_data_recv,
+};
+
+
+
+/**
+ * @brief   初始化接收协议
+ * @param   void
+ * @return  初始化结果.
+ */
+int32_t protocol_init(void)
+{
+	memset(&parser, 0, sizeof(struct prot_frame_parser_t));
+    
+    /* 初始化分配数据接收与解析缓冲区*/
+    parser.recv_ptr = recv_buf;
+	
+	/* set communicator */
+	lt_communicator_set("serial1",PROT_FRAME_LEN_RECV,&_ops);
+	return 0;
+}
+
+INIT_DEVICE_EXPORT(protocol_init);			/* init protocol automatically */
+
 
 /**********************************************************************************************/

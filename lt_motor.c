@@ -1,6 +1,9 @@
 #include "ltmotorlib.h"
 
 extern struct lt_motor_manager_object * _manager;
+static rt_err_t _output_pid(lt_motor_t motor,float target);
+static rt_err_t _disable_motor(lt_motor_t motor);
+
 lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t type)
 {
 	lt_motor_t _motor;
@@ -60,19 +63,43 @@ rt_err_t lt_motor_set_sensor(lt_motor_t motor, lt_sensor_t sensor)
 	return RT_EOK;
 }
 
+rt_err_t lt_motor_set_pid(lt_motor_t motor,lt_pid_t pid,rt_uint8_t pid_type)
+{
+	RT_ASSERT(motor != RT_NULL);
+	RT_ASSERT(pid != RT_NULL);
+	if(pid_type == PID_TYPE_VEL)
+	{
+		motor->pid_vel = pid;
+	}
+	else if(pid_type == PID_TYPE_POS)
+	{
+		motor->pid_pos = pid;
+	}
+	
+	return RT_EOK;
+}
+
+rt_err_t lt_motor_set_timer(lt_motor_t motor, lt_timer_t timer)
+{
+	RT_ASSERT(motor != RT_NULL);
+	RT_ASSERT(timer != RT_NULL);
+	motor->timer = timer;
+	
+	return RT_EOK;
+}
+
 float lt_motor_get_velocity(lt_motor_t motor, rt_uint32_t measure_time_ms)
 {
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(motor->sensor != RT_NULL);
-	float speed = lt_sensor_get_velocity(motor->sensor,measure_time_ms*1000)/motor->reduction_ratio;	/* ms --> us */
-	return speed;								/* unit: rad/s */		
+	return lt_sensor_get_velocity(motor->sensor,measure_time_ms*1000)/motor->reduction_ratio;	/* ms --> us, unit: rad/s */		
 }
 
 float lt_motor_get_position(lt_motor_t motor)
 {
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(motor->sensor != RT_NULL);
-	return lt_sensor_get_angle(motor->sensor);	/* unit: rad */
+	return lt_sensor_get_angle(motor->sensor)/motor->reduction_ratio;	/* unit: rad */
 }
 
 rt_err_t lt_motor_get_info(lt_motor_t motor, struct lt_motor_info* info)
@@ -89,7 +116,7 @@ rt_err_t lt_motor_get_info(lt_motor_t motor, struct lt_motor_info* info)
 	}
 	else
 	{
-		info->position = lt_sensor_get_angle(motor->sensor);
+		info->position = lt_sensor_get_angle(motor->sensor)/motor->reduction_ratio;
 		return RT_EOK;
 	}
 }
@@ -99,8 +126,28 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(motor->ops != RT_NULL);
 	RT_ASSERT(motor->ops->control != RT_NULL);
+	/* in order to fast output function call */
+	if(cmd == MOTOR_CTRL_OUTPUT)
+	{
+		return motor->ops->control(motor,cmd,arg);
+	}
+	
 	switch(cmd)
 	{
+		case MOTOR_CTRL_OUTPUT_PID:
+		{
+			float* velocity = (float*)arg;
+			motor->pid_type = PID_TYPE_VEL;
+			_output_pid(motor,*velocity);
+			break;
+		}
+		case MOTOR_CTRL_OUTPUT_ANGLE_PID:
+		{
+			float* position = (float*)arg;
+			motor->pid_type = PID_TYPE_POS;
+			_output_pid(motor,*position);
+			break;
+		}
 		case MOTOR_CTRL_GET_STATUS:
 		{
 			rt_uint8_t* status = (rt_uint8_t *)arg;
@@ -109,14 +156,20 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 		}
 		case MOTOR_CTRL_GET_POSITION:
 		{
-			float* position = (float*)arg;
-			*position = lt_motor_get_position(motor);
+			float* res = (float*)arg;
+			*res = lt_sensor_get_angle(motor->sensor)/motor->reduction_ratio;
 			break;
 		}
 		case MOTOR_CTRL_GET_VELOCITY:
 		{
-			float* velocity = (float*)arg;
-			*velocity = lt_motor_get_velocity(motor,*velocity);
+			float* res = (float*)arg;
+			*res = lt_sensor_get_velocity(motor->sensor,*res*1000)/motor->reduction_ratio;	/* ms --> us, unit: rad/s */	
+			break;
+		}
+		case MOTOR_CTRL_DISABLE_PID:
+		{
+			motor->pid_type = 0;
+			_disable_motor(motor);
 			break;
 		}
 		default:
@@ -140,9 +193,7 @@ rt_err_t lt_motor_enable(lt_motor_t motor,rt_uint8_t dir)
 rt_err_t lt_motor_disable(lt_motor_t motor)
 {
 	RT_ASSERT(motor != RT_NULL);
-	RT_ASSERT(motor->driver != RT_NULL);
-	motor->status = MOTOR_STATUS_STOP;
-	return lt_driver_disable(motor->driver);
+	return _disable_motor(motor);
 }
 
 rt_err_t lt_motor_delete(lt_motor_t motor)
@@ -150,15 +201,76 @@ rt_err_t lt_motor_delete(lt_motor_t motor)
 	RT_ASSERT(motor != RT_NULL);
 	RT_ASSERT(motor->ops != RT_NULL);
 	RT_ASSERT(motor->ops->_delete != RT_NULL);
-	if(motor->driver != RT_NULL)
-	{
-		lt_driver_disable(motor->driver);
-	}
+	_disable_motor(motor);
 #ifdef LT_USING_MOTOR_MSH_TEST
 	lt_manager_delete_motor(motor);				/* move motor from the manager */
 #endif
 	return motor->ops->_delete(motor);
 }
+
+static rt_err_t _disable_motor(lt_motor_t motor)
+{
+	motor->status = MOTOR_STATUS_STOP;
+	if(motor->timer != RT_NULL)
+	{
+		lt_timer_disable(motor->timer,TIMER_TYPE_HW);
+		lt_timer_disable(motor->timer,TIMER_TYPE_SOFT);
+	}
+	if(motor->driver != RT_NULL)
+	{
+		lt_driver_disable(motor->driver);
+	}
+	
+	return RT_EOK;
+}
+
+static void _output_pid_timeout(lt_timer_t timer)
+{
+	lt_motor_t motor = (lt_motor_t)timer;
+	/* check pid type*/
+	lt_pid_t pid;
+	float feedback, control_u;
+	if(motor->pid_type == PID_TYPE_VEL)
+	{
+		pid = motor->pid_vel;
+		feedback = lt_sensor_get_velocity(motor->sensor,pid->dt*1000) * 9.55 / motor->reduction_ratio;	/* get rpm */
+		control_u = PID_VEL_CONST * lt_pid_control(pid,feedback) ;				/* multiply a coefficiency */
+	}
+	else if(motor->pid_type == PID_TYPE_POS)
+	{
+		pid = motor->pid_pos;
+		feedback = lt_sensor_get_angle(motor->sensor) * 180.0f/PI/ motor->reduction_ratio;				/* get angle */
+		control_u = PID_POS_CONST * lt_pid_control(pid,feedback);				/* multiply a coefficiency */
+	}
+	else return;
+	motor->ops->control(motor,MOTOR_CTRL_OUTPUT,&control_u);					/* finally output */
+}
+/* simple pid interface */
+static rt_err_t _output_pid(lt_motor_t motor,float target)
+{
+	/* check needed part*/
+	if(motor->sensor == RT_NULL || motor->driver == RT_NULL || motor->timer == RT_NULL) return RT_ERROR;
+	lt_pid_t pid;
+	lt_timer_t timer = motor->timer;
+	
+	if(motor->pid_type == PID_TYPE_VEL)
+	{
+		pid = motor->pid_vel;
+	}
+	else
+	{
+		pid = motor->pid_pos;
+	}
+	if(pid == RT_NULL) return RT_ERROR;
+	
+	lt_pid_set_target(pid,target);
+	/* config hw_timer and start  */
+	lt_timer_period_call(timer,pid->dt*1000,_output_pid_timeout,motor,TIMER_TYPE_HW);
+	motor->status = MOTOR_STATUS_RUN;
+	
+	return RT_EOK;
+}
+
 
 char * _status[4] = {"STOP","RUN","ACCELERATE","INTERP"};
 char* _type[4] = {"UNKNOWN","DC","BLDC","STEPPER"};

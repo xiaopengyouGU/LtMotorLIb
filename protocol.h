@@ -105,7 +105,7 @@ int32_t protocol_init(void);
   * @param num：参数个数
   * @retval 无
   */
-void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num);
+//void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num);
 
 uint8_t protocol_frame_parse(uint8_t *data, uint16_t *data_len);
 
