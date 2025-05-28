@@ -31,7 +31,6 @@ static lt_driver_t driver_dc;
 static lt_sensor_t sensor_dc;
 static lt_timer_t timer_dc;
 
-static rt_thread_t process_thread;
 static lt_pid_t pid_dc;			/* motor pid */
 static lt_pid_t pid_pos_dc;		/* position pid */
 static lt_pid_t pid_vel_dc;		/* velocity pid */
@@ -44,23 +43,23 @@ rt_err_t dc_callback(void *parameter)
 rt_err_t test_motor_dc_config(void)
 {
 	/* create motor, driver, sensor, get pin number */
-	rt_base_t forward = rt_pin_get("PF.8");
-	rt_base_t reversal = rt_pin_get("PF.7");
+	rt_base_t forward = rt_pin_get("PG.6");
+	rt_base_t reversal = rt_pin_get("PG.7");
 	
 	motor_dc = lt_motor_create("motor_dc",34,MOTOR_TYPE_DC);
 	driver_dc = lt_driver_create(DRIVER_TYPE_DC);
-	sensor_dc = lt_sensor_create(ENCODER_NAME_1,4*13,SENSOR_TYPE_ENCODER);
+	sensor_dc = lt_sensor_create(ENCODER_NAME_2,4*13,SENSOR_TYPE_ENCODER);
 	timer_dc = lt_timer_create("dc_timer",TIMER_NAME_1,0);				
 	pid_vel_dc = lt_pid_create(1.96,1.6,0.01,100);							/* sample time: 100ms, unit: ms */
 	pid_pos_dc = lt_pid_create(10.1,23,0.01,100);							
 	/* timer is not needed in all case, so as sensor */
 	/* check res */
 	if(motor_dc == RT_NULL || driver_dc == RT_NULL || sensor_dc == RT_NULL) return RT_ERROR;
-	if(timer_dc == RT_NULL || pid_vel_dc == RT_NULL || pid_pos_dc) return RT_ERROR;	
+	if(timer_dc == RT_NULL || pid_vel_dc == RT_NULL || pid_pos_dc == RT_NULL) return RT_ERROR;	
 
 	/* config driver, here we use default config */
-	lt_driver_set_pwm(driver_dc,PWM_NAME_1,4,0);					/* set pwm and channel */
-	lt_driver_set_pins(driver_dc,forward, reversal,0);						/* set pins */
+	lt_driver_set_pwm(driver_dc,PWM_NAME_1,2,0);						/* set pwm and channel */
+	lt_driver_set_pins(driver_dc,forward, reversal,0);					/* set pins */
 	//lt_driver_set_output(driver,1000,0.5,0);							/* set pwm period and duty_cycle, unit: us */
 	lt_sensor_calibrate(sensor_dc);										/* calibrate sensor */
 	
@@ -74,7 +73,6 @@ rt_err_t test_motor_dc_config(void)
 	
 	return RT_EOK;
 }
-
 
 /* x stepper config */
 static lt_motor_t x_stepper;
@@ -98,17 +96,17 @@ rt_err_t test_stepper_x_config(void)
 	
 	x_stepper = lt_motor_create("x_stepper",1,MOTOR_TYPE_STEPPER);
 	x_driver = lt_driver_create(DRIVER_TYPE_STEPPER);
-	x_encoder = lt_sensor_create(ENCODER_NAME_1,4*600,SENSOR_TYPE_ENCODER);
+	x_encoder = lt_sensor_create(ENCODER_NAME_2,4*600,SENSOR_TYPE_ENCODER);
 	x_timer = lt_timer_create("x_timer",TIMER_NAME_2,0);				
 	pid_vel_x = lt_pid_create(1,8.2,0.3,50);							   /* sample time: 50ms, unit: ms */
 	pid_pos_x = lt_pid_create(1,8.2,0.3,50);							   /* sample time: 50ms, unit: ms */
 	/* timer is not needed in all case, so as sensor */
 	/* check res */
 	if(x_stepper == RT_NULL || x_driver == RT_NULL || x_encoder == RT_NULL) return RT_ERROR;
-	if(x_timer == RT_NULL || pid_vel_x == RT_NULL  || pid_pos_x) return RT_ERROR;	
+	if(x_timer == RT_NULL || pid_vel_x == RT_NULL  || pid_pos_x == RT_NULL) return RT_ERROR;	
 	
 	/* config driver, here we use default config */
-	lt_driver_set_pwm(x_driver,PWM_NAME_1,2,0);				/* set pwm and channel */
+	lt_driver_set_pwm(x_driver,PWM_NAME_1,3,0);							/* set pwm and channel */
 	lt_driver_set_pins(x_driver,forward,0,enable);						/* set pins */
 	//lt_driver_set_output(driver,1000,0.5,0);							/* set pwm period and duty_cycle, unit: us */
 	lt_sensor_calibrate(x_encoder);										/* calibrate sensor */
@@ -144,19 +142,19 @@ rt_err_t y_callback(void *parameter)
 rt_err_t test_stepper_y_config(void)
 {
 	/* create motor, driver, sensor, get pin number */
-	rt_base_t forward = rt_pin_get("PE.11");
+	rt_base_t forward = rt_pin_get("PE.10");
 	rt_base_t enable = rt_pin_get("PF.13");
 	struct lt_stepper_config config;
 	
 	y_stepper = lt_motor_create("y_stepper",1,MOTOR_TYPE_STEPPER);
 	y_driver = lt_driver_create(DRIVER_TYPE_STEPPER);
-	y_timer = lt_timer_create("y_timer","",0);						/* we don't select hardware timer */			
+	y_timer = lt_timer_create("y_timer",TIMER_NAME_3,0);							/* we don't select hardware timer */			
 	/* timer is not needed in all case, so as sensor */
 	/* check res */
 	if(y_stepper == RT_NULL || y_driver == RT_NULL || y_timer == RT_NULL) return RT_ERROR;
 
 	/* config driver, here we use default config */
-	lt_driver_set_pwm(y_driver,PWM_NAME_1,1,0);				/* set pwm and channel */
+	lt_driver_set_pwm(y_driver,PWM_NAME_1,4,0);							/* set pwm and channel */
 	lt_driver_set_pins(y_driver,forward,0,enable);						/* set pins */
 	//lt_driver_set_output(driver,1000,0.5,0);							/* set pwm period and duty_cycle, unit: us */
 	/* we use default stepper timer config */
@@ -173,33 +171,157 @@ rt_err_t test_stepper_y_config(void)
 	return lt_motor_control(y_stepper,STEPPER_CTRL_CONFIG,&config);
 }
 
-//#ifndef LT_USING_MOTOR_MSH_TEST
-//#define TEST_PID
-//#define TEST_PID_VEL
-//#define TEST_PID_POS
-#define TEST_PID_TWO_LOOP
+/* bldc motor config */
+static lt_motor_t x_bldc;
+static lt_driver_t driver_bldc_x;
+static lt_sensor_t sensor_bldc_x;
+static lt_timer_t timer_bldc_x;
+static lt_current_t curr_bldc_x;
 
-static rt_thread_t process_thread;
-#ifdef TEST_PID
-static void pid_test(lt_timer_t timer)
+static lt_pid_t pid_curr_bldc_x;	/* current pid */
+static lt_pid_t pid_pos_bldc_x;		/* position pid */
+static lt_pid_t pid_vel_bldc_x;		/* velocity pid */
+
+rt_err_t bldc_x_callback(void *parameter)
+{
+	return rt_kprintf("x_bldc finished a output! \n");
+}
+
+rt_err_t test_bldc_x_config(void)
+{
+	struct lt_bldc_config config;
+	rt_err_t res;
+	
+	x_bldc = lt_motor_create("x_bldc",1,MOTOR_TYPE_BLDC);
+	driver_bldc_x = lt_driver_create(DRIVER_TYPE_BLDC);
+	sensor_bldc_x = lt_sensor_create(I2C_NAME_1,1,SENSOR_TYPE_MAGNETIC);
+	timer_bldc_x = lt_timer_create("blx_timer",TIMER_NAME_4,0);				
+	curr_bldc_x = lt_current_create(0.01,50,12);								/* shunt resistor: 10 mOhm */
+	pid_vel_bldc_x = lt_pid_create(1.96,1.6,0.01,20);							/* sample time: 20ms, unit: ms */
+	pid_pos_bldc_x = lt_pid_create(10.1,23,0.01,20);		
+	pid_curr_bldc_x = lt_pid_create(10,10,10,20);
+	/* check res */
+	if(x_bldc == RT_NULL || driver_bldc_x == RT_NULL || sensor_bldc_x == RT_NULL || curr_bldc_x == RT_NULL) return RT_ERROR;
+	if(timer_bldc_x == RT_NULL || pid_vel_bldc_x == RT_NULL || pid_pos_bldc_x == RT_NULL || pid_curr_bldc_x == RT_NULL) return RT_ERROR;	
+
+	/* config driver, here we use default config */
+	lt_driver_set_pwm(driver_bldc_x,PWM_NAME_2,2,PWM_PHASE_A);				/* set three phases pwm and channels */
+	lt_driver_set_pwm(driver_bldc_x,PWM_NAME_2,3,PWM_PHASE_B);				/* set three phases pwm and channels */
+	lt_driver_set_pwm(driver_bldc_x,PWM_NAME_2,4,PWM_PHASE_C);				/* set three phases pwm and channels */
+	//lt_driver_set_pins(driver_bldc_x,0, 0,0);								/* no need to set pins */
+	lt_sensor_calibrate(sensor_bldc_x);										/* calibrate sensor */
+	
+	/* config current sense */
+	lt_current_set_adc(curr_bldc_x,ADC_NAME_1,2,3,-1);						/* set adc and channel, -1 means ignored */
+	lt_current_calibrate(curr_bldc_x);										/* calibrate current sense */	
+	
+	/* config motor */
+	lt_motor_set_driver(x_bldc,driver_bldc_x);
+	lt_motor_set_sensor(x_bldc,sensor_bldc_x);
+	lt_motor_set_timer(x_bldc,timer_bldc_x);
+	lt_motor_set_pid(x_bldc,pid_vel_bldc_x,PID_TYPE_VEL);					/* Ltmotorlib provided simple pid interface for velocity and position pid */
+	lt_motor_set_pid(x_bldc,pid_pos_bldc_x,PID_TYPE_POS);
+	lt_motor_set_callback(x_bldc,bldc_x_callback);							/* when finished a output, motor object will call callback function */
+	
+	/* bldc part config */
+	config.current = curr_bldc_x;
+	config.foc_type = FOC_TYPE_DEFAULT;
+	config.inductance = 0;													/* unit: H */
+	config.KV = 100;						
+	config.resistance = 14.4;												/* unit: Ohm */
+	config.poles = 4;	
+	config.max_volt = 12;													/* unit: Voltage */
+	config.pid_current = pid_curr_bldc_x;
+	
+	return lt_motor_control(x_bldc,BLDC_CTRL_CONFIG,&config);
+}
+
+/* bldc motor config */
+static lt_motor_t y_bldc;
+static lt_driver_t driver_bldc_y;
+static lt_sensor_t sensor_bldc_y;
+static lt_timer_t timer_bldc_y;
+static lt_current_t curr_bldc_y;
+
+static lt_pid_t pid_curr_bldc_y;	/* current pid */
+static lt_pid_t pid_pos_bldc_y;		/* position pid */
+static lt_pid_t pid_vel_bldc_y;		/* velocity pid */
+
+rt_err_t bldc_y_callback(void *parameter)
+{
+	return rt_kprintf("y_bldc finished a output! \n");
+}
+
+rt_err_t test_bldc_y_config(void)
+{
+	struct lt_bldc_config config;
+	rt_err_t res;
+	
+	x_bldc = lt_motor_create("y_bldc",1,MOTOR_TYPE_BLDC);
+	driver_bldc_y = lt_driver_create(DRIVER_TYPE_BLDC);
+	sensor_bldc_y = lt_sensor_create(I2C_NAME_2,1,SENSOR_TYPE_MAGNETIC);
+	timer_bldc_y = lt_timer_create("bly_timer",TIMER_NAME_5,0);				
+	curr_bldc_y = lt_current_create(0.01,50,12);								/* shunt resistor: 10 mOhm */
+	pid_vel_bldc_y = lt_pid_create(1.96,1.6,0.01,20);							/* sample time: 20ms, unit: ms */
+	pid_pos_bldc_y = lt_pid_create(10.1,23,0.01,20);		
+	pid_curr_bldc_y = lt_pid_create(10,10,10,20);
+	/* check res */
+	if(y_bldc == RT_NULL || driver_bldc_y == RT_NULL || sensor_bldc_y == RT_NULL || curr_bldc_y == RT_NULL) return RT_ERROR;
+	if(timer_bldc_y == RT_NULL || pid_vel_bldc_y == RT_NULL || pid_pos_bldc_y == RT_NULL || pid_curr_bldc_y == RT_NULL) return RT_ERROR;	
+
+	/* config driver, here we use default config */
+	lt_driver_set_pwm(driver_bldc_y,PWM_NAME_3,1,PWM_PHASE_A);				/* set three phases pwm and channels */
+	lt_driver_set_pwm(driver_bldc_y,PWM_NAME_3,2,PWM_PHASE_B);				/* set three phases pwm and channels */
+	lt_driver_set_pwm(driver_bldc_y,PWM_NAME_3,3,PWM_PHASE_C);				/* set three phases pwm and channels */
+	//lt_driver_set_pins(driver_bldc_y,0, 0,0);								/* no need to set pins */
+	lt_sensor_calibrate(sensor_bldc_y);										/* calibrate sensor */
+	
+	/* config current sense */
+	lt_current_set_adc(curr_bldc_y,ADC_NAME_1,4,5,-1);						/* set adc and channel, -1 means ignored */
+	lt_current_calibrate(curr_bldc_y);										/* calibrate current sense */	
+	
+	/* config motor */
+	lt_motor_set_driver(y_bldc,driver_bldc_y);
+	lt_motor_set_sensor(y_bldc,sensor_bldc_y);
+	lt_motor_set_timer(y_bldc,timer_bldc_y);
+	lt_motor_set_pid(y_bldc,pid_vel_bldc_y,PID_TYPE_VEL);					/* Ltmotorlib provided simple pid interface for velocity and position pid */
+	lt_motor_set_pid(y_bldc,pid_pos_bldc_y,PID_TYPE_POS);
+	lt_motor_set_callback(y_bldc,bldc_y_callback);							/* when finished a output, motor object will call callback function */
+	
+	/* bldc part config */
+	config.current = curr_bldc_y;
+	config.foc_type = FOC_TYPE_SVPWM;
+	config.inductance = 0;													/* unit: H */
+	config.KV = 100;						
+	config.resistance = 14.4;												/* unit: Ohm */
+	config.poles = 4;	
+	config.max_volt = 12;													/* unit: Voltage */
+	config.pid_current = pid_curr_bldc_y;
+	
+	return lt_motor_control(y_bldc,BLDC_CTRL_CONFIG,&config);
+}
+
+
+/***************************************************************************************************/
+static rt_thread_t _process;
+
+void test_pid_simple(lt_timer_t timer)
 {
 	/* eg: KP = 0.26, KI = 0.9, KD = 0.02 */
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid = (lt_pid_t)motor->user_data;
+	lt_pid_t pid = motor->pid_vel;
 	float read_val = lt_pid_get_control(pid);
 	float curr_val = lt_pid_control(pid,read_val);
 	int temp = curr_val;									/* transform data */
 	lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&temp,1);	/* send fact value to upper computer */
 }
-#endif
 
-#ifdef TEST_PID_VEL
-static void velocity_loop(lt_timer_t timer)
+void test_velocity_loop(lt_timer_t timer)
 {
 	/* eg: KP = 1.96, KI = 1.6, KD = 0.01 */
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid = (lt_pid_t)motor->user_data;
-	float vel = lt_motor_get_velocity(motor,pid->dt) * 9.55;		/* get rpm */
+	lt_pid_t pid = motor->pid_vel;
+	float vel = lt_motor_get_velocity(motor,pid->dt*1000000) * 9.55;/* get rpm */
 	float control_u = PID_VEL_CONST * lt_pid_control(pid,vel);		/* multiply a coefficiency, default: 0.1f */
 	int t_vel = vel, t_control_u = control_u;							
 	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);			/* output */
@@ -207,14 +329,12 @@ static void velocity_loop(lt_timer_t timer)
 	lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_vel,1);
 	lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_control_u,1);
 }
-#endif
 
-#ifdef TEST_PID_POS
-static void position_loop(lt_timer_t timer)
+void test_position_loop(lt_timer_t timer)
 {
 	/* eg: KP = 10.1, KI = 23, KD = 0.01 */
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid = (lt_pid_t)motor->user_data;
+	lt_pid_t pid = motor->pid_pos;
 	float position = lt_motor_get_position(motor)*180.0f/PI;		/* get motor angle, unit: degree */
 	float control_u = PID_POS_CONST * lt_pid_control(pid,position);	/* multiply 0.01f as default  */
 	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);
@@ -223,14 +343,12 @@ static void position_loop(lt_timer_t timer)
 	lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_position,1);
 	lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_control_u,1);
 }
-#endif
 
-#ifdef TEST_PID_TWO_LOOP
-static void position_velocity_loop(lt_timer_t timer)
+void test_position_velocity_loop(lt_timer_t timer)
 {
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid_vel = (lt_pid_t)motor->user_data;
-	lt_pid_t pid_pos = (lt_pid_t)pid_vel->user_data;
+	lt_pid_t pid_vel = motor->pid_vel;
+	lt_pid_t pid_pos = motor->pid_pos;
 	/* we adjust vel_pid first */
 	/* DC motor: Kp = 3.9, Ki = 1.5, Kd = 1.05 */
 	/* DC motor: Kp = 1.8, Ki = 2, Kd = 0.3 */
@@ -255,19 +373,15 @@ static void position_velocity_loop(lt_timer_t timer)
 	count++;
 	
 }
-#endif
 /*************************************************************/
 /* communicate with upper computer */
 static void process_thread_entry(void* parameter)
 {
-	lt_timer_t timer = (lt_timer_t)parameter;
-#ifndef TEST_PID	
+	lt_timer_t timer = (lt_timer_t)parameter;	
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid = (lt_pid_t)motor->user_data;
-#endif
-	
+	lt_pid_t pid = motor->pid_vel;
 #ifdef TEST_PID_TWO_LOOP	
-	pid = (lt_pid_t)pid->user_data;
+	pid = motor->pid_pos;
 #endif
 	rt_uint8_t cmd_type = CMD_NONE;     /* command type */
 	struct lt_pid_info info;			/* pid info */
@@ -275,6 +389,7 @@ static void process_thread_entry(void* parameter)
 	while(1)
 	{
 		cmd_type = lt_communicator_receive(&info);
+		//cmd_type = 1;
 		switch (cmd_type)
 		{
 			case SET_PID_CMD:
@@ -302,70 +417,67 @@ static void process_thread_entry(void* parameter)
 			}
 			case RESET_CMD:
 			{
-				lt_pid_reset(pid);				 		/* reset pid! */
+				lt_pid_reset(pid);				 		 /* reset pid! */
 				lt_motor_disable(motor);				 /* disable motor and timer */
 				lt_timer_disable(timer,TIMER_TYPE_HW);
+				lt_communicator_send(SEND_STOP_CMD,CURVES_CH1,RT_NULL,0);
 				break;
 			}
 			case SET_PERIOD_CMD:
 			{
 				lt_pid_set_dt(pid,info.dt);
-				lt_timer_set(timer,info.dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);
+				lt_timer_set(timer,info.dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* ms --> us */
 				break;
 			}
 			default:break;
 		}
 		rt_thread_mdelay(100);
   }
+
 }
+
+
+
 //#endif
 
-/* motor test frame */
+/* motor close loop test frame */
 rt_err_t test_close_loop_pid(lt_motor_t motor,lt_timer_t timer,lt_pid_t pid_vel,lt_pid_t pid_pos,void(*timeout)(lt_timer_t))
 {
 	/* check parameter */
 	if(timer == RT_NULL || timeout == RT_NULL) return RT_ERROR;
 	if(pid_vel == RT_NULL && pid_pos == RT_NULL) return RT_ERROR;
 	/* we already config motor and use user_data variable to transport data
-	* software timer can be used if sample time is relatively large, such as 100ms */	
-#ifdef TEST_PID
-	lt_timer_set(timer,pid_vel->dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* ms --> us */
-#endif	
+	* software timer can be used if sample time is relatively large, such as 100ms */
 	
-#ifdef TEST_PID_VEL	
-	/* config velocity pid */	
-	lt_timer_set(timer,pid_vel->dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* ms --> us */
-	motor->user_data = pid_vel;
-#endif
-	
-#ifdef TEST_PID_POS
-	lt_timer_set(timer,pid_vel->dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* ms --> us */
-	motor->user_data = pid_pos;
-#endif
-	
-#ifdef TEST_PID_TWO_LOOP/* config two loop pid */
-	lt_timer_set(timer,pid_vel->dt*1000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* ms --> us */
-	motor->user_data = pid_vel;
-	pid_vel->user_data = pid_pos;
-#endif
-
 	timer->user_data = motor;
+	lt_motor_set_pid(motor,pid_vel,PID_TYPE_VEL);
+	lt_motor_set_pid(motor,pid_pos,PID_TYPE_POS);
 	lt_timer_set_timeout(timer,timeout,TIMER_TYPE_HW);					/* set timer timeout function */
-	lt_timer_enable(timer,TIMER_TYPE_HW);								/* start hardware timer */
+	lt_timer_set(timer,pid_vel->dt*1000000,TIMER_MODE_PERIODIC,TIMER_TYPE_HW);	/* s --> us */	
 	
 /* create process thread */
-	process_thread = rt_thread_create("process",		/* create a process thread */
+	_process = rt_thread_create("_process",		/* create a process thread */
 								process_thread_entry,
-								timer,
-								1024,
-								9,				
+								timer,	
+								2048,
+								5,				
 								20);
-	if(process_thread != RT_NULL)
+	if(_process == RT_NULL)
 	{
-		rt_thread_startup(process_thread);			/* start thread */
+		rt_kprintf("create process thread failed! \n");
 	}
+	rt_thread_startup(_process);
+
+	
+	return RT_EOK;
 }
 
+rt_err_t test_start_motor()
+{
+	test_motor_dc_config();
+	test_close_loop_pid(motor_dc,timer_dc,pid_vel_dc,pid_pos_dc,test_pid_simple);
+	return RT_EOK;
+}
 
 ///* stepper for interpolation */
 //static lt_motor_t x_stepper;
@@ -541,7 +653,7 @@ void test_motor_get_position(lt_motor_t motor)
 {
 	if(motor == RT_NULL) return;
 	float pos = lt_motor_get_position(motor);
-	rt_kprintf("motor position: %.2f rad, %.2 degree \n",pos,pos*180.0f/PI);
+	rt_kprintf("motor position: %.2f rad, %.2f degree \n",pos,pos*180.0f/PI);
 }
 
 void test_motor_get_velocity(lt_motor_t motor)
@@ -553,46 +665,75 @@ void test_motor_get_velocity(lt_motor_t motor)
 	rt_thread_delay(100);					/* delay 100ms */
 	tick = rt_tick_get() - tick;			/* get measure time, unit: ms */
 	vel = lt_motor_get_velocity(motor,tick);
-	rt_kprintf("motor velocity: %.2f rad/s, %.2 rpm \n",vel,vel*9.55);
+	rt_kprintf("motor velocity: %.2f rad/s, %.2f rpm , measure time: %d ms \n",vel,vel*9.55,tick);
 }
 
 void test_stepper_trapzoid(lt_motor_t motor, int step,float acc, float dec,float speed)
 {
 	if(motor == RT_NULL) return;	
 	static struct lt_curve_config config; 		/* use static variable to avoid being distroyed */
+	rt_err_t res;
 	config.acc = acc;
 	config.dec = dec;
 	config.target = speed;
 	config.step = step;
 	config.type = CURVE_TYPE_TRAPZOID;
-	lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
-	rt_kprintf("stepper trapzoid accel ==> step:%d,  accel:%.2f Hz/ms,  decel:%.2f Hz/ms,  speed:%.2f Hz \n",step,acc,dec,speed);
+	res = lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
+	
+	if(res == RT_EOK)
+	{
+		rt_kprintf("stepper trapzoid accel ==> step:%d,  accel:%.2f Hz/ms,  decel:%.2f Hz/ms,  speed:%.2f Hz \n",step,acc,dec,speed);
+	}
+	else
+	{
+		rt_kprintf("stepper config trapzoid failed! \n");
+	}
 }
 
 void test_stepper_s_curve(lt_motor_t motor, int step, float acc_t,float freq_max, float freq_min, float flexible)
 {
 	if(motor == RT_NULL) return;	
 	static struct lt_curve_config config; 		/* use static variable to avoid being distroyed */
+	rt_err_t res;
 	config.acc = acc_t;
 	config.target = freq_max;
 	config.initial = freq_min;
 	config.flexible = flexible;
 	config.step = step;
 	config.type = CURVE_TYPE_S_CURVE;
-	lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
-	rt_kprintf("stepper s_curve accel ==> step:%d,  acc_t:%.2f ms, freq_max:%.2f Hz,  freq_min:%.2f Hz,  flexible:%.2f \n",step,acc_t,freq_max,freq_min,flexible);
+	res = lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
+	
+	if(res == RT_EOK)
+	{
+		rt_kprintf("stepper s_curve accel ==> step:%d,  acc_t:%.2f ms, freq_max:%.2f Hz,  freq_min:%.2f Hz,  flexible:%.2f \n",step,acc_t,freq_max,freq_min,flexible);
+	}
+	else
+	{
+		rt_kprintf("stepper config s_curve failed! \n");
+	}
+	
 }
 
 void test_stepper_5_section(lt_motor_t motor,int step,float acc_t, float speed)
 {
 	if(motor == RT_NULL) return;	
 	static struct lt_curve_config config; 		/* use static variable to avoid being distroyed */
+	rt_err_t res;
 	config.acc = acc_t;
+	config.initial = 0;
 	config.target = speed;
 	config.step = step;
 	config.type = CURVE_TYPE_5_SECTION;
-	lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
-	rt_kprintf("stepper 5_section accel ==> step:%d,  acc_t:%.2f ms, speed:%.2f Hz \n",step,acc_t,speed);
+	res = lt_motor_control(motor,STEPPER_CTRL_ACCELERATE,&config);
+	
+	if(res == RT_EOK)
+	{
+		rt_kprintf("stepper 5_section accel ==> step:%d,  acc_t:%.2f ms, speed:%.2f Hz \n",step,acc_t,speed);
+	}
+	else
+	{
+		rt_kprintf("stepper config 5_section failed! \n");
+	}
 }
 
 void test_stepper_line_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_start, int y_start, int x_end, int y_end)
@@ -600,14 +741,23 @@ void test_stepper_line_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_star
 	if(x_motor == RT_NULL) return;	
 	if(y_motor == RT_NULL) return;	
 	static struct lt_interp_config config;		/* use static variable to avoid being distroyed */
+	rt_err_t res;
 	config.x_start = x_start;
 	config.y_start = y_start;
 	config.x_end = x_end;
 	config.y_end = y_end;
 	config.radius = 0;							/* means line interp */
 	config.y_motor = y_motor;
-	lt_motor_control(x_motor,STEPPER_CTRL_INTERPOLATION,&config);
-	rt_kprintf("stepper line interp ==> start:(%d, %d), end:(%d, %d) \n",x_start, y_start);
+	res = lt_motor_control(x_motor,STEPPER_CTRL_INTERPOLATION,&config);
+	
+	if(res == RT_EOK)
+	{
+		rt_kprintf("stepper line interp ==> start:(%d, %d), end:(%d, %d) \n",x_start, y_start,x_end,y_end);
+	}
+	else
+	{
+		rt_kprintf("stepper config line interp failed! \n");
+	}
 }
 
 void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_start, int y_start, int x_end, int y_end,rt_uint16_t radius, rt_uint8_t dir)
@@ -615,6 +765,7 @@ void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_
 	if(x_motor == RT_NULL) return;	
 	if(y_motor == RT_NULL) return;	
 	static struct lt_interp_config config;		/* use static variable to avoid being distroyed */
+	rt_err_t res;
 	char* direction;
 	config.x_start = x_start;
 	config.y_start = y_start;
@@ -622,11 +773,20 @@ void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_
 	config.y_end = y_end;
 	config.dir = dir;
 	config.radius = radius;
+	config.y_motor = y_motor;
 	
 	if(dir == DIR_CW)	direction = "CW";
 	else				direction = "CCW";
-	lt_motor_control(x_motor,STEPPER_CTRL_INTERPOLATION,&config);
-	rt_kprintf("stepper circular interp ==> start:(%d, %d), end:(%d, %d), radius:%d	dir:%s \n",x_start,y_start,x_end,y_end,radius,direction);
+	res = lt_motor_control(x_motor,STEPPER_CTRL_INTERPOLATION,&config);
+	
+	if(res == RT_EOK)
+	{
+		rt_kprintf("stepper circular interp ==> start:(%d, %d), end:(%d, %d), radius:%d	dir:%s \n",x_start,y_start,x_end,y_end,radius,direction);
+	}
+	else
+	{
+		rt_kprintf("stepper config circular interp failed! \n");
+	}
 }
 /****************************************************************************************/
 #endif

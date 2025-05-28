@@ -146,6 +146,17 @@ float _absf(float i)
 	return i;
 }
 
+float _max(float a, float b)
+{
+	if(a >= b) return a;
+	else return b;
+}
+
+float _min(float a, float b)
+{
+	if(a < b) return a;
+	else return b;
+}
 
 rt_uint8_t _get_center(int x_start, int y_start, int x_end, int y_end,rt_uint16_t r, rt_uint8_t dir, float*x_center, float* y_center)
 {
@@ -160,10 +171,10 @@ rt_uint8_t _get_center(int x_start, int y_start, int x_end, int y_end,rt_uint16_
 	if (dist > 2*r) return 0;		/* radius is too small */
 	/* calculate normal vector */
 	vec_x = -1.0f * (y_end - y_start)/dist;
-	vec_y = (x_end - x_start)/dist;
+	vec_y = 1.0f*(x_end - x_start)/dist;
     
     /* select center based on dir--> clockwise, counter-clockwise; */
-    h = sqrtf(r*r - (dist/2)*(dist));
+    h = sqrtf(r*r - (dist/2)*(dist/2));
     if (dir == DIR_CCW)
 	{
 		*x_center = x_mid + h * vec_x;
@@ -179,7 +190,7 @@ rt_uint8_t _get_center(int x_start, int y_start, int x_end, int y_end,rt_uint16_
 
 rt_uint8_t _check_end(int x_pos, int y_pos, int x_target, int y_target,rt_uint8_t exact)
 {
-	rt_uint8_t dist = _abs(x_pos - x_target) + _abs(y_pos - y_target);
+	rt_uint32_t dist = _abs(x_pos - x_target) + _abs(y_pos - y_target);
 	if(exact == 1)
 	{
 		if(dist == 0 ) return 1;
@@ -222,3 +233,19 @@ rt_int32_t _get_count(float curr, float last,rt_int32_t count, rt_uint8_t volt)
 	
 	return count;
 }
+
+float _normalize_angle(float angle_el)
+{
+	int n = _abs(angle_el/(2*PI));
+	if(angle_el <= 0)
+	{
+		angle_el += (n+1)*2*PI;
+	}
+	else
+	{
+		angle_el = angle_el - n * 2 *PI;
+	}
+	return angle_el;
+}
+
+

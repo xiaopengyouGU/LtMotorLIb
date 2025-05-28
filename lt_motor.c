@@ -12,8 +12,8 @@ lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t t
 #ifdef LT_USING_MOTOR_MSH_TEST
 	/* check whether motor is in manager */
 	_motor = lt_manager_get_motor(name);
-#endif
 	if(_motor != RT_NULL)	return RT_NULL;		/* motor is already in the mananger */
+#endif
 	
 	switch(type)
 	{
@@ -22,11 +22,11 @@ lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t t
 			_motor = _motor_dc_ops.create(name,reduction_ration,type);
 			break;
 		}
-//		case MOTOR_TYPE_BLDC:
-//		{
-//			motor = _motor_bldc_ops.create(name,reduction_ration,type);
-//			break;
-//		}
+		case MOTOR_TYPE_BLDC:
+		{
+			_motor = _motor_bldc_ops.create(name,reduction_ration,type);
+			break;
+		}
 		case MOTOR_TYPE_STEPPER:
 		{
 			_motor = _motor_stepper_ops.create(name,reduction_ration,type);
@@ -66,7 +66,6 @@ rt_err_t lt_motor_set_sensor(lt_motor_t motor, lt_sensor_t sensor)
 rt_err_t lt_motor_set_pid(lt_motor_t motor,lt_pid_t pid,rt_uint8_t pid_type)
 {
 	RT_ASSERT(motor != RT_NULL);
-	RT_ASSERT(pid != RT_NULL);
 	if(pid_type == PID_TYPE_VEL)
 	{
 		motor->pid_vel = pid;
@@ -174,7 +173,7 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 		}
 		default:
 		{
-			motor->ops->control(motor,cmd,arg);
+			return motor->ops->control(motor,cmd,arg);
 			break;
 		}
 	}
@@ -233,7 +232,7 @@ static void _output_pid_timeout(lt_timer_t timer)
 	if(motor->pid_type == PID_TYPE_VEL)
 	{
 		pid = motor->pid_vel;
-		feedback = lt_sensor_get_velocity(motor->sensor,pid->dt*1000) * 9.55 / motor->reduction_ratio;	/* get rpm */
+		feedback = lt_sensor_get_velocity(motor->sensor,pid->dt*1000000) * 9.55 / motor->reduction_ratio;	/* get rpm, unit: s --> us */
 		control_u = PID_VEL_CONST * lt_pid_control(pid,feedback) ;				/* multiply a coefficiency */
 	}
 	else if(motor->pid_type == PID_TYPE_POS)
@@ -265,7 +264,7 @@ static rt_err_t _output_pid(lt_motor_t motor,float target)
 	
 	lt_pid_set_target(pid,target);
 	/* config hw_timer and start  */
-	lt_timer_period_call(timer,pid->dt*1000,_output_pid_timeout,motor,TIMER_TYPE_HW);
+	lt_timer_period_call(timer,pid->dt*1000000,_output_pid_timeout,motor,TIMER_TYPE_HW);	/* unit: s --> us */
 	motor->status = MOTOR_STATUS_RUN;
 	
 	return RT_EOK;

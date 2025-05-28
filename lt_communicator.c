@@ -28,6 +28,8 @@ static void serial_thread_entry(void *parameter)
 void lt_communicator_send(int cmd,rt_uint8_t channel,void*data,rt_uint8_t num)
 {
 	RT_ASSERT(_communicator != RT_NULL);
+	RT_ASSERT(_communicator->ops != RT_NULL);
+	RT_ASSERT(_communicator->ops->send != RT_NULL);
 	_communicator->ops->send(_communicator,cmd,channel,data,num);
 }
 
@@ -68,6 +70,8 @@ void lt_communicator_set(char* serial,rt_size_t buf_size,struct lt_commun_ops* o
 rt_uint8_t lt_communicator_receive(void*info)
 {
 	RT_ASSERT(_communicator != RT_NULL);
+	RT_ASSERT(_communicator->ops != RT_NULL);
+	RT_ASSERT(_communicator->ops->process != RT_NULL);
 	return _communicator->ops->process(_communicator,info);
 }
 

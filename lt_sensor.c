@@ -47,6 +47,10 @@ rt_err_t lt_sensor_calibrate(lt_sensor_t sensor)
 rt_err_t lt_sensor_delete(lt_sensor_t sensor)
 {
 	RT_ASSERT(sensor != RT_NULL);
+	if(sensor->dev != RT_NULL)
+	{
+		rt_device_close(sensor->dev);
+	}
 	if(sensor->lpf != RT_NULL)
 	{
 		lt_filter_delete(sensor->lpf);

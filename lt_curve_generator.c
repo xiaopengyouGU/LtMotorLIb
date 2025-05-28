@@ -1,6 +1,5 @@
 #include "ltmotorlib.h"
 #include "math.h"
-
 /* in many case, acceleration part and deceleration part are symmetric, so we don't need to create a full velocity table */
 static void _trapzoid_accel(lt_curve_t curve,int step,float acc,float dec, float speed)
 {
@@ -9,11 +8,12 @@ static void _trapzoid_accel(lt_curve_t curve,int step,float acc,float dec, float
 	float* T_nums;
 	if(acc == dec) flag = 1;									/* in this case, we only save a part of the full velocity table to save memory */
 	/* get min period ang initial period */
-	rt_uint32_t T0 = 0.69*sqrtf(1000 * 2 * acc) * 1000.0f;	    /* initial period, t = 1000*sqrt(2*S*k0/acc), unit: us, multiply error coefficiency */
+	rt_uint32_t T0 = 0.69*sqrtf(1000 * 2/ acc) * 1000.0f;	    /* initial period, t = 1000*sqrt(2*S/(acc*k0)), unit: us, multiply error coefficiency */
 	/* get accel step and max accel step */
 	rt_uint16_t acc_step = (dec * step)/(acc + dec);
 	rt_uint16_t acc_max_step = (speed * speed)/(2 * acc) /1000.0f;			/* S = v^2/(2*accel) * k0 */
 	
+	if(acc_max_step == 0) acc_max_step = 1;
 	if(acc_step <= acc_max_step)					/* stepper can't reach desired speed, so accel --> decel */
 	{ 
 		dec_step = step - acc_step;
@@ -42,11 +42,22 @@ static void _trapzoid_accel(lt_curve_t curve,int step,float acc,float dec, float
 	RT_ASSERT(T_nums != RT_NULL);					/* check res */
 	
 	T_nums[0] = T0;		
-	for(i = 1; i < acc_step; i++)					/* accel */
+	for(i = 1; i < acc_step - 1; i++)				/* accel, modify last acc value */
 	{
 		T_nums[i] = T_nums[i-1] - 2.0f*T_nums[i-1]/(4*i + 1);
 	}
-	T_nums[0] = T0/0.69;
+	
+	T_nums[0] = T0/0.69;							/* consider acc_step == 1, T_nums[0] would be redefined! */
+	if(acc_step >= acc_max_step)					/* can reach desired speed */
+	{
+		T_nums[acc_step - 1] = 1000000.0f/speed;
+	}
+	else
+	{	
+		if(i >= 1)									/* avoid index output */
+		T_nums[i] = T_nums[i-1] - 2.0f*T_nums[i-1]/(4*i + 1);
+	}
+	
 	/* create a full velocity table or not */
 	if(!flag)										/* create full table */
 	{
@@ -156,6 +167,7 @@ static void _5_section_accel(lt_curve_t curve,int step,rt_uint16_t acc_t,float v
 	{
 		T_nums[i] *= 1000.0f;											/* ms --> us */
 	}
+	
 	if(!is_inc)															/* descend */
 	{
 		for(i = 0; i < acc_step/2; i++)									/* change sequence */
@@ -189,10 +201,10 @@ rt_err_t lt_curve_set(lt_curve_t curve,struct lt_curve_config* config)
 	RT_ASSERT(config != RT_NULL);
 	/* create a velocity table */
 	config->step = _abs(config->step);
-	rt_uint16_t step = _abs(config->step);
+	rt_uint16_t step = config->step;
 	if(step == 0) return RT_ERROR;								/* unvalid input */
 	if(config->initial < 0 || config->target <= 0) return RT_ERROR;
-	if(config->acc <= 0 || config->dec <= 0 || config->flexible <= 0) return RT_ERROR;
+	if(config->acc < 0 || config->dec < 0 || config->flexible < 0) return RT_ERROR;
 	/* user forget to release memory */
 	if(curve->T_nums != RT_NULL)
 	{
@@ -244,7 +256,7 @@ rt_uint32_t lt_curve_process(lt_curve_t curve)
 		{
 			time = curve->T_nums[curve->acc_step - 1];
 		}
-		else										/* decel part */
+		else 										/* decel part */
 		{
 			time = curve->T_nums[curve->step - 1 - curr_step];
 		}

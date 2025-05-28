@@ -42,8 +42,7 @@ rt_err_t lt_interp_set(lt_interp_t interp,struct lt_interp_config* config)
 	/* check input */
 	if(config->dir != DIR_CCW && config->dir != DIR_CW) return RT_ERROR;
 	rt_err_t res = _pre_process(interp,config->x_start,config->y_start,config->x_end,config->y_end,config->radius,config->dir);
-	if(res != RT_EOK) return RT_ERROR;
-	return RT_EOK;
+	return res;
 }
 
 rt_uint8_t lt_interp_process(lt_interp_t interp,rt_uint8_t*dir)
@@ -93,10 +92,10 @@ static rt_err_t _pre_process(lt_interp_t interp,int x_start, int y_start, int x_
 	{
 		float x_center, y_center;
 		rt_uint8_t res = _get_center(x_start,y_start,x_end,y_end,r,dir,&x_center,&y_center);
-		if (res == 0) return RT_ERROR;						/* radius is two small */
+		if (res == 0) return RT_ERROR;						/* radius is too small */
 		int x_cen = (int)x_center, y_cen = (int)y_center;
-		float bias = _fabs(x_center - x_cen) + _fabs(y_center - y_cen);
-		if(bias <= 0.0000001f)		/* we regard that cicular center is integers */
+		float bias = _absf(x_center - x_cen) + _absf(y_center - y_cen);
+		if(bias <= 0.000001f)		/* we regard that cicular center is integers */
 		{
 			interp->exact = 1;
 		}
@@ -169,8 +168,8 @@ static rt_uint8_t _get_circular_dir(int x_pos, int y_pos,rt_uint8_t dir, int dev
 	}
 	
 	val = _map_circular[_x][_y];
-	move_axis = GET_BIT(val,0);
-	*move_dir = GET_BIT(val,1);
+	move_axis = GET_BIT(val,0) + 1;
+	*move_dir = _abs(ROT_REVERSAL - GET_BIT(val,1));
 	
 	return move_axis;
 }
@@ -182,7 +181,7 @@ static rt_uint8_t _calc_circular(lt_interp_t interp, rt_uint8_t*dir)
 	int devia = interp->deviation;
 	rt_uint8_t res = _check_end(x_pos,y_pos,interp->x_end,interp->y_end,interp->exact);
 	rt_uint8_t move_axis, move_dir,_dir;
-	if (res) return 0;					/* reach target position */
+	if(res == 1) return 0;
     /* get move dir and move axis */
     move_axis = _get_circular_dir(x_pos,y_pos,interp->dir,devia,&move_dir);
 	_dir = _abs(move_dir - ROT_REVERSAL);	/* 1: FOR, 0: REV */

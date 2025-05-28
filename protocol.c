@@ -261,38 +261,6 @@ void protocol_data_recv(uint8_t *data, uint16_t data_len)
     parser.w_oft = (parser.w_oft + data_len) % PROT_FRAME_LEN_RECV;                          // 计算写偏移
 }
 
-/**
-  * @brief 设置上位机的值
-  * @param cmd：命令
-  * @param ch: 曲线通道
-  * @param data：参数指针
-  * @param num：参数个数
-  * @retval 无
-  */
-//void set_computer_value(uint8_t cmd, uint8_t ch, void *data, uint8_t num)
-//{
-//	uint8_t sum = 0;    // 校验和
-//	num *= 4;           // 一个参数 4 个字节
-//  
-//	static packet_head_t set_packet;
-//	  
-//	set_packet.head = FRAME_HEADER;     // 包头 0x59485A53
-//	set_packet.len  = 0x0B + num;      // 包长
-//	set_packet.ch   = ch;              // 设置通道
-//	set_packet.cmd  = cmd;             // 设置命令
-//	  
-//	sum = check_sum(0, (uint8_t *)&set_packet, sizeof(set_packet));       // 计算包头校验和
-//	sum = check_sum(sum, (uint8_t *)data, num);                           // 计算参数校验和
-//  /* here we use UART device to operate UART */
-//	
-//	rt_device_write(serial,0,(rt_uint8_t *)&set_packet,sizeof(set_packet));	//send frame header
-//	rt_device_write(serial,0,(rt_uint8_t *)data,num);						//send data
-//	rt_device_write(serial,0,(rt_uint8_t *)&sum,sizeof(sum));				//send check_sum
-//	
-////  HAL_UART_Transmit(&UartHandle, (uint8_t *)&set_packet, sizeof(set_packet), 0xFFFFF);    // 发送数据头
-////	HAL_UART_Transmit(&UartHandle, (uint8_t *)data, num, 0xFFFFF);                          // 发送参数
-////	HAL_UART_Transmit(&UartHandle, (uint8_t *)&sum, sizeof(sum), 0xFFFFF);                  // 发送校验和
-//}
 static void _protocol_send(lt_commun_t communicator,int cmd,rt_uint8_t channel,void*data,rt_uint8_t num)
 {
 	rt_device_t  serial = communicator->dev;								/* get serial device */
@@ -312,10 +280,7 @@ static void _protocol_send(lt_commun_t communicator,int cmd,rt_uint8_t channel,v
 	rt_device_write(serial,0,(rt_uint8_t *)&set_packet,sizeof(set_packet));	/* send frame header */
 	rt_device_write(serial,0,(rt_uint8_t *)data,num);						/* send data */
 	rt_device_write(serial,0,(rt_uint8_t *)&sum,sizeof(sum));				/* send check_sum */
-	
-//  HAL_UART_Transmit(&UartHandle, (uint8_t *)&set_packet, sizeof(set_packet), 0xFFFFF);    // 发送数据头
-//	HAL_UART_Transmit(&UartHandle, (uint8_t *)data, num, 0xFFFFF);                          // 发送参数
-//	HAL_UART_Transmit(&UartHandle, (uint8_t *)&sum, sizeof(sum), 0xFFFFF);                  // 发送校验和
+
 }
 static rt_uint8_t _protocol_process(lt_commun_t communicator,void* info)
 {
@@ -327,19 +292,24 @@ static rt_uint8_t _protocol_process(lt_commun_t communicator,void* info)
     {
       case SET_PID_CMD:
       {
-        _info->Kp = COMPOUND_32BIT(&frame_data[13]);
-        _info->Ki = COMPOUND_32BIT(&frame_data[17]);
-        _info->Kd = COMPOUND_32BIT(&frame_data[21]);
+		rt_uint32_t temp0 = COMPOUND_32BIT(&frame_data[13]);
+		rt_uint32_t temp1 = COMPOUND_32BIT(&frame_data[17]);
+        rt_uint32_t temp2 = COMPOUND_32BIT(&frame_data[21]);
+        _info->Kp = *(float *)&temp0;
+        _info->Ki = *(float *)&temp1;
+        _info->Kd = *(float *)&temp2;
 		break;
       }
       case SET_TARGET_CMD:
       {
-		_info->target = COMPOUND_32BIT(&frame_data[13]);    	/* get data */
+		int actual_temp = COMPOUND_32BIT(&frame_data[13]);    	// 得到数据
+		_info->target = actual_temp;    	/* get data */
 		break;
       }
 	  case SET_PERIOD_CMD:
       {
-        _info->dt = COMPOUND_32BIT(&frame_data[13]);     		/* set timer period 1~1000ms */
+		int actual_temp = COMPOUND_32BIT(&frame_data[13]);    	// 得到数据
+        _info->dt = actual_temp;     		/* set timer period 1~1000ms */
       }
       break;
     }
@@ -370,7 +340,7 @@ int32_t protocol_init(void)
     parser.recv_ptr = recv_buf;
 	
 	/* set communicator */
-	lt_communicator_set("serial1",PROT_FRAME_LEN_RECV,&_ops);
+	lt_communicator_set("uart1",PROT_FRAME_LEN_RECV,&_ops);
 	return 0;
 }
 

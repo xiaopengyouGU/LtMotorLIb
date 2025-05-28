@@ -1,6 +1,6 @@
 #include "ltmotorlib.h"
 
-#define _TF				0.003	/* unit: s */
+#define _TF				0.0005	/* unit: s */
 
 struct lt_sensor_ops _sensor_encoder_ops;
 static lt_sensor_t _sensor_encoder_create(char* sensor_name,rt_uint16_t resolution, rt_uint8_t type)
@@ -49,8 +49,8 @@ float _sensor_encoder_get_angle(lt_sensor_t sensor)
 	rt_device_open(encoder,RT_DEVICE_OFLAG_RDONLY);
 	rt_device_read(encoder,0,&count,1);
 	
-	position = (float)(count)/(sensor->resolution);		/* notice direction! */
-	position *= 2*PI;									/* unit: rad */
+	position = (float)(-count)/(sensor->resolution);		/* notice direction! */
+	position *= 2*PI;										/* unit: rad */
 	
 	return position;
 }
@@ -63,14 +63,18 @@ float _sensor_encoder_get_velocity(lt_sensor_t sensor,rt_uint32_t measure_time_u
 	
 	rt_device_open(encoder,RT_DEVICE_OFLAG_RDONLY);
 	rt_device_read(encoder,0,&curr_count,1);
-	sensor->count = curr_count;						/* refrech encoder count! */
 	/* use M method to measure velocity */
-	if(measure_time_us == 0) return 0;					/* unvalid measure time */
-	velocity = (float)(sensor->count - curr_count)*1000000.0f/measure_time_us;
-	velocity /= (sensor->resolution)*2*PI;				/* unit: rad/s */
+	if(measure_time_us == 0)
+	{
+		sensor->count = curr_count;						/* refrech encoder count! */
+		return 0;										/* unvalid measure time */
+	}
+	velocity = (float)(sensor->count - curr_count)*1000000.0f/measure_time_us;	/* here we already consider the direction */
+	velocity = velocity/(sensor->resolution)*2*PI;				/* unit: rad/s */
 	/* low pass filter process */
 	lt_filter_set_dt(sensor->lpf,measure_time_us/1000000.0f);	/* uint: s */
 	velocity = lt_filter_process(sensor->lpf,velocity);
+	sensor->count = curr_count;						/* refrech encoder count! */
 	
 	return velocity;
 }

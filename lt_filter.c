@@ -20,7 +20,7 @@ void lt_filter_set_tf(lt_filter_t filter, float Tf)
 void lt_filter_set_dt(lt_filter_t filter, float dt)
 {
 	RT_ASSERT(filter != RT_NULL);
-	filter->Tf = dt;
+	filter->dt = dt;
 }
 
 void lt_filter_set(lt_filter_t filter, float Tf, float dt)

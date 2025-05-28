@@ -71,7 +71,7 @@ static void _motor_dc_output(lt_motor_t motor, float input)
 	else
 	{
 		duty_cycle = input/MOTOR_MAX_SPEED;
-		lt_driver_set_output(motor->driver,MOTOR_PERIOD,duty_cycle);
+		lt_driver_set_output(motor->driver,MOTOR_OUTPUT_PERIOD,duty_cycle);
 		lt_driver_enable(motor->driver,dir);/* enable output */
 		motor->status = MOTOR_STATUS_RUN;	/* change motor status */
 	}

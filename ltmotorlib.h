@@ -1,14 +1,14 @@
 #ifndef __LT_MOTOR_LIB_H__
 #define __LT_MOTOR_LIB_H__
-	
 #include <rtthread.h>
 #include <rtdevice.h>
 #include "lt_def.h"
+rt_align(RT_ALIGN_SIZE)
 /* declare special motor operators */
 extern char* _status[4];
 extern char* _type[4];
 extern struct lt_motor_ops _motor_dc_ops;
-//extern struct lt_motor_ops _motor_bldc_ops;
+extern struct lt_motor_ops _motor_bldc_ops;
 extern struct lt_motor_ops _motor_stepper_ops;
 
 /************************* common functions ************************************/
@@ -25,7 +25,33 @@ int _abs(int i);
 int _abs_plus_1(int i,rt_uint8_t dir);
 int _abs_sub_1(int i);
 float _absf(float i);
+float _max(float a, float b);
+float _min(float a, float b);
+float _normalize_angle(float angle_el);
 /************************* common functions ************************************/
+/* foc object */
+#define FOC_TYPE_DEFAULT		0x00
+#define FOC_TYPE_SVPWM			0x01
+#define FOC_TYPE_SPWM			0x02
+#define FOC_TYPE_6_TRAPZOID		0x03
+#define FOC_TYPE_12_TRAPZOID	0x04
+
+struct lt_foc_object
+{
+	float fa;				/* A phase */
+	float fb;				/* B phase */
+	float fc;				/* C phase */
+	float max_val;			
+	rt_uint8_t type;		/* foc type */
+};
+typedef struct lt_foc_object* lt_foc_t;
+
+lt_foc_t lt_foc_create(void);
+void lt_foc_set_maxval(lt_foc_t foc,float max_val);
+void lt_foc_set_type(lt_foc_t foc,rt_uint8_t type);
+void lt_foc_process(lt_foc_t foc, float fd, float fq, float angle_el);
+void lt_foc_map_duty(lt_foc_t foc,float* dutyA, float* dutyB,float* dutyC);
+rt_err_t lt_foc_delete(lt_foc_t foc);
 
 /*******************************************************************************/
 struct lt_filter_object			/* low pass filter object */
@@ -60,16 +86,15 @@ struct lt_curve_config
 	rt_uint8_t type;
 };
 /* this curve generator provides a velocity table whose unit is us coresponding to Hz 
-*  user should release memeory by hand 
-*/
+* user should release memory by hand! */
 struct lt_curve_generator_object
-{
-	float* T_nums;				
+{				
 	rt_uint16_t step;
 	rt_uint16_t acc_step;
 	rt_uint16_t dec_start;
-	rt_uint8_t curr_step;			/* current step */
+	rt_uint16_t curr_step;			/* current step */
 	rt_uint8_t flag;				/* 0: part velocity table, 1: full velocity table */
+	float* T_nums;                     
 };
 typedef struct lt_curve_generator_object* lt_curve_t;
 
@@ -80,7 +105,6 @@ rt_err_t lt_curve_release(lt_curve_t curve);
 rt_err_t lt_curve_restart(lt_curve_t curve);				/* use same velocity table */
 rt_err_t lt_curve_delete(lt_curve_t curve);
 
-/*******************************************************************************/
 /*****************************************************************************************************/
 /* interp object */
 #define INTERP_TYPE_LINE		0x01
@@ -96,8 +120,6 @@ struct lt_interp_object
 {
 	int x_pos;					/* current pos */
 	int y_pos;
-	int x_trans;				/* int line interp, trans means start, int circular interp, trans means circle center */			
-	int y_trans;
 	int x_end;					/* target position */
 	int y_end;
 	int deviation;				/* position deviation */
@@ -142,10 +164,9 @@ struct lt_pid_object
 	float err_last;
 	float Kp,Ki,Kd;
 	float integral;
-	float dt;			/* sample time */
+	float dt;			/* sample time,unit: ms */
 	float int_limit;	/* integral limit */
 	float output_limit;	/* output limit */	
-	void* user_data;	
 };
 typedef struct lt_pid_object* lt_pid_t;
 /* pid info for communicating with upper computer */
@@ -272,16 +293,18 @@ rt_err_t lt_sensor_delete(lt_sensor_t sensor);
 typedef struct lt_timer_object * lt_timer_t;
 struct lt_timer_object
 {
+	char hw_name[RT_NAME_MAX];		/* find timer from name */
 	rt_device_t hw_timer;			/* hardware timer, high precision */
 	rt_timer_t soft_timer;			/* software timer, no number limit */
 	rt_uint32_t hw_period;			/* hardware timer period, unit: us */
+	rt_hwtimer_mode_t hw_mode;		/* hardware timer mode */
 	
 	void(*soft_timeout)(lt_timer_t);/* hardware timer timeout function */
 	void(*hw_timeout)(lt_timer_t);	/* software timer timeout function */	
 	void* user_data;				/* user_data for data transport */
 };
 
-lt_timer_t lt_timer_create(char*soft_name,char* hw_name,rt_uint32_t freq);
+lt_timer_t lt_timer_create(char* soft_name,char* hw_name,rt_uint32_t freq);
 rt_err_t lt_timer_set(lt_timer_t timer,rt_uint32_t period, rt_uint8_t mode,rt_uint8_t type);
 rt_err_t lt_timer_set_timeout(lt_timer_t timer,void(*timeout)(lt_timer_t),rt_uint8_t type);
 rt_err_t lt_timer_period_call(lt_timer_t timer,rt_uint32_t period, void(*timeout)(lt_timer_t),void* user_data,rt_uint8_t type);
@@ -289,6 +312,33 @@ rt_err_t lt_timer_enable(lt_timer_t timer,rt_uint8_t type);
 rt_err_t lt_timer_disable(lt_timer_t timer,rt_uint8_t type);
 rt_err_t lt_timer_delete(lt_timer_t timer);
 
+/*******************************************************************************/
+/* current sense object */
+struct lt_current_sense_object
+{
+	rt_adc_device_t adc;
+	rt_int8_t channel_A;
+	rt_int8_t channel_B;
+	rt_int8_t channel_C;
+	
+	float resistor;
+	float amp_gain;
+	rt_uint8_t bit_num;
+	float bias_a;			/* zero bias */
+	float bias_b;
+	float bias_c;
+	lt_filter_t lpf;		/* low pass filter */
+	
+	void* user_data;
+};
+typedef struct lt_current_sense_object * lt_current_t;
+
+lt_current_t lt_current_create(float resistor, float amp_gain, rt_uint8_t bit_num);
+rt_err_t lt_current_set_adc(lt_current_t, char* adc_name,rt_int8_t channel_A, rt_int8_t channel_B, rt_int8_t channel_C);
+rt_err_t lt_current_calibrate(lt_current_t current);
+rt_err_t lt_current_get(lt_current_t current, float*Ia, float*Ib, float*Ic);
+float lt_current_get_iq(lt_current_t current, float angle, float dt);
+rt_err_t lt_current_delete(lt_current_t current);
 
 /*******************************************************************************/
 /* motor part!!! */
@@ -410,6 +460,55 @@ struct lt_stepper_config
 	rt_uint16_t subdivide;		/* subdivide number */
 };
 /*****************************************************************************************************/
+/* bldc motor part */
+#define BLDC_CTRL_OUTPUT					MOTOR_CTRL_OUTPUT
+#define BLDC_CTRL_OUTPUT_ANGLE				MOTOR_CTRL_OUTPUT_ANGLE
+#define BLDC_CTRL_GET_STATUS				MOTOR_CTRL_GET_STATUS
+#define BLDC_CTRL_GET_VELOCITY				MOTOR_CTRL_GET_VELOCITY
+#define BLDC_CTRL_GET_POSITION				MOTOR_CTRL_GET_POSITION
+#define BLDC_CTRL_OUTPUT_PID				MOTOR_CTRL_OUTPUT_PID
+#define BLDC_CTRL_OUTPUT_ANGLE_PID			MOTOR_CTRL_OUTPUT_ANGLE_PID
+/* basic control commanda are the same */
+#define BLDC_CTRL_CONFIG					(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x20)
+#define BLDC_CTRL_OUTPUT_TORQUE				(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x21)	
+/* bldc flag */
+#define FLAG_BLDC_CONFIG					0x01
+#define FLAG_BLDC_OPEN_POS					0x02	/* used for open loop output */					
+#define FLAG_BLDC_OPEN_POS_BIAS				0x04	/* bit4: 1: curr angle > target, 0: curr angle < target */
+#define FLAG_BLDC_TORQUE					0x08	/* constant torque output */
+
+struct lt_motor_bldc_object
+{
+	struct lt_motor_object parent;
+
+	rt_uint16_t poles;			/* pole pairs number */
+	float resistance;			/* resistance, unit: ohm */
+	float inductance;			/* inductance, unit: H */
+	float KV;					/* KV value, unit: rpm/V */
+	float max_volt;				/* max output voltage */
+	lt_foc_t foc;				/* foc object */
+	lt_pid_t pid_current;		/* current pid object */
+	lt_current_t current;		/* current sense */
+	
+	float target_pos;			/* target position for open loop output */
+	float target_vel;			/* target speed for open loop output */
+	rt_uint8_t flag;			/* config flag */
+	
+};
+typedef struct lt_motor_bldc_object * lt_bldc_t;
+
+struct lt_bldc_config
+{
+	rt_uint16_t poles;			/* pole pairs number */
+	float resistance;			/* resistance, unit: ohm */
+	float inductance;			/* inductance, unit: H */
+	float KV;					/* KV value, unit: rpm/V */
+	float max_volt;				/* max output voltage */
+	rt_uint8_t foc_type;		/* used foc type */
+	lt_pid_t pid_current;		/* current pid */
+	lt_current_t current;		/* current sense */
+};
+/*****************************************************************************************************/
 /* motor mananger */
 #define MANAGER_CTRL_SHOW_MOTOR			0x00
 #define MANAGER_CTRL_SHOW_ALL_MOTORS	0x01
@@ -451,12 +550,17 @@ void test_stepper_s_curve(lt_motor_t motor, int step, float acc_t, float freq_ma
 void test_stepper_5_section(lt_motor_t motor,int step,float acc_t, float speed);
 void test_stepper_line_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_pos, int y_pos,int x_end, int y_end);
 void test_stepper_circular_interp(lt_motor_t x_motor, lt_motor_t y_motor, int x_start, int y_start, int x_end, int y_end, rt_uint16_t radius,rt_uint8_t dir);
-
+#endif
+rt_err_t test_start_motor(void);
 rt_err_t test_motor_dc_config(void);
 rt_err_t test_stepper_x_config(void);
 rt_err_t test_stepper_y_config(void);
 rt_err_t test_close_loop_pid(lt_motor_t motor,lt_timer_t timer,lt_pid_t pid_vel,lt_pid_t pid_pos,void(*timeout)(lt_timer_t));
-#endif
+
+void test_pid_simple(lt_timer_t timer);
+void test_velocity_loop(lt_timer_t timer);
+void test_position_loop(lt_timer_t timer);
+void test_position_velocity_loop(lt_timer_t timer);
 /*****************************************************************************************************/
 /* communicate with upper computer to operate motor pid control */
 struct lt_communicator_object	
@@ -483,24 +587,4 @@ void lt_communicator_send(int cmd,rt_uint8_t channel,void*data,rt_uint8_t num);
 void lt_communicator_set(char* serial,rt_size_t buf_size,struct lt_commun_ops* ops);
 rt_uint8_t lt_communicator_receive(void*info);
 rt_err_t lt_communicator_delete(void);
-
-
-/***********************************************************************************/
-/* foc object */
-struct lt_foc_object
-{
-	float fa;				/* A phase */
-	float fb;				/* B phase */
-	float fc;				/* C phase */
-	float max_val;						
-};
-typedef struct lt_foc_object* lt_foc_t;
-
-lt_foc_t lt_foc_create(float max_val);
-void lt_foc_set_maxval(lt_foc_t foc,float max_val);
-void lt_foc_process(lt_foc_t foc, float angle_el, float fd, float fq);
-void lt_foc_map_duty(lt_foc_t foc,float* dutyA, float* dutyB,float* dutyC);
-rt_err_t lt_foc_delete(lt_foc_t foc);
-
-
 #endif

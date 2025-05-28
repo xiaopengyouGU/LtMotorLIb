@@ -1,5 +1,7 @@
 #include "ltmotorlib.h"
 #include "math.h"
+
+#define INTERP_TIMER_TYPE	TIMER_TYPE_SOFT
 /* use software timer to help output given number pulse, this function is called once */
 static void _timer_output_angle(lt_timer_t timer)
 {
@@ -7,7 +9,7 @@ static void _timer_output_angle(lt_timer_t timer)
 	lt_driver_disable(stepper->parent.driver);		/* disable output */
 	lt_timer_disable(timer,TIMER_TYPE_SOFT);		/* use software timer */
 	stepper->parent.status = MOTOR_STATUS_STOP;
-	if(!stepper->parent.callback)					/* call done callback function */
+	if(stepper->parent.callback)					/* call done callback function */
 	{
 		stepper->parent.callback(RT_NULL);
 	}
@@ -31,18 +33,9 @@ static lt_motor_t _motor_stepper_create(char* name,rt_uint8_t reduction_ration,r
 	_motor->parent.reduction_ratio = reduction_ration;
 	_motor->parent.type = type;
 	_motor->parent.ops = &_motor_stepper_ops;/* set operators */
-	/* create curve struct */
-	_motor->curve = rt_malloc(sizeof(struct lt_curve_generator_object));
-	_motor->interp = rt_malloc(sizeof(struct lt_interp_object));
-	
-	if(_motor->curve != RT_NULL)
-	{
-		rt_memset(_motor->curve,0,sizeof(struct lt_curve_generator_object));
-	}
-	if(_motor->interp != RT_NULL)
-	{
-		rt_memset(_motor->interp,0,sizeof(struct lt_interp_object));
-	}
+	/* create curve and interp */
+	_motor->curve = lt_curve_create();
+	_motor->interp = lt_interp_create();
 	
 	return (lt_motor_t)_motor;				 /* type transform */
 }
@@ -157,11 +150,12 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 	}
 	/* get number of square pulse */
 	rt_uint32_t n = angle/(stepper->angle/stepper->subdivide);		
-	rt_uint32_t period = n*stepper->period*1000;									/* unit: us */		
+	rt_uint32_t period = stepper->period*1000;									/* unit: us */		
 	/* config software timer and start  */
-	lt_timer_period_call(timer,period,_timer_output_angle,stepper,TIMER_TYPE_SOFT);
+	lt_timer_period_call(timer,n*period,_timer_output_angle,stepper,TIMER_TYPE_SOFT);
 	lt_driver_set_output(driver,period,STEPPER_DUTY_CYCLE);
-	lt_driver_enable(driver,dir);													/* output */
+	lt_driver_enable(driver,dir);
+	stepper->parent.status = MOTOR_STATUS_RUN;	/* output */
 }
 
 static void _motor_stepper_config(lt_stepper_t stepper,struct lt_stepper_config* config)
@@ -187,9 +181,8 @@ void _hw_timer_callback_accel(lt_timer_t timer)
 	if(period == 0)												/* finish all work, stop timer! */
 	{
 		lt_timer_disable(timer,TIMER_TYPE_HW);					/* disable hwtimer */
-		lt_curve_release(curve);								/* release memory */
 		stepper->parent.status = MOTOR_STATUS_STOP;
-		if(!stepper->parent.callback)							/* call done callback function */
+		if(stepper->parent.callback)							/* call done callback function */
 		{
 			stepper->parent.callback(RT_NULL);
 		}
@@ -211,7 +204,6 @@ static rt_err_t _motor_stepper_accelerate(lt_stepper_t stepper,struct lt_curve_c
 {
 	if(!(stepper->flag & FLAG_STEPPER_CONFIG)) return RT_ERROR;		/* stepper is not configured */
 	RT_ASSERT(config != RT_NULL);
-	
 	/* clear stepper flag */
 	stepper->flag = FLAG_STEPPER_CONFIG;
 	lt_driver_t driver = stepper->parent.driver;
@@ -219,9 +211,10 @@ static rt_err_t _motor_stepper_accelerate(lt_stepper_t stepper,struct lt_curve_c
 	lt_curve_t curve = stepper->curve; 
 	rt_uint8_t dir = _get_rotation_dir((float)config->step);	
 	rt_err_t res;
-	rt_uint32_t T0,period;
+	rt_uint32_t T0;
 	
-	lt_driver_disable(stepper->parent.driver);			    /* disable pwm output at first */
+	lt_driver_disable(driver);			    /* disable pwm output at first */
+	lt_curve_release(curve);										/* release memory */
 	/* check accleration type and create curve */
 	switch(config->type)
 	{
@@ -241,13 +234,8 @@ static rt_err_t _motor_stepper_accelerate(lt_stepper_t stepper,struct lt_curve_c
 	if(res != RT_EOK) return res;							/* create curve failed*/
 	
 	T0 = lt_curve_process(curve);							/* get first period */
-	period = T0;
-	if(config->type == CURVE_TYPE_S_CURVE)					/* in S curve case, period is 1ms */
-	{		
-		period = 1000;										/* unit: us*/
-	}
 	/* config hw_timer and start  */
-	lt_timer_period_call(timer,period,_hw_timer_callback_accel,stepper,TIMER_TYPE_HW);
+	lt_timer_period_call(timer,T0,_hw_timer_callback_accel,stepper,TIMER_TYPE_HW);
 	lt_driver_set_output(driver,T0,STEPPER_DUTY_CYCLE);
 	lt_driver_enable(driver,dir);
 	stepper->parent.status = MOTOR_STATUS_ACCELERATE;
@@ -279,14 +267,14 @@ void _timer_callback_interp(lt_timer_t timer)
 	}
 	else	/* finish interpolation, close timer and call motor callback function */
 	{
-		lt_timer_disable(timer,TIMER_TYPE_SOFT);				/* disable hwtimer */
+		lt_timer_disable(timer,INTERP_TIMER_TYPE);				/* disable interp timer */
 		stepper->parent.status = MOTOR_STATUS_STOP;
 		y_motor->status = MOTOR_STATUS_STOP;
-		if(!stepper->parent.callback)							/* call done callback function */
+		if(stepper->parent.callback)							/* call done callback function */
 		{
 			stepper->parent.callback(RT_NULL);
 		}
-		if(!y_motor->callback)
+		if(y_motor->callback)
 		{
 			y_motor->callback(RT_NULL);
 		}
@@ -319,8 +307,9 @@ static rt_err_t _motor_stepper_interp(lt_stepper_t stepper,struct lt_interp_conf
 	/* set driver */
 	lt_driver_set_output(x_driver,period,0.5);
 	lt_driver_set_output(y_driver,period,0.5);
-	/* config software timer and start  */
-	lt_timer_period_call(timer,period,_timer_callback_interp,stepper,TIMER_TYPE_SOFT);
+	/* config timer and start  */
+	lt_timer_period_call(timer,period,_timer_callback_interp,stepper,INTERP_TIMER_TYPE);
+
 	
 	/* here we use user_data variation to transport object! */
 	stepper->parent.user_data = y_motor;

@@ -81,13 +81,13 @@ float lt_pid_control(lt_pid_t pid,float curr_val)
 	RT_ASSERT(pid != RT_NULL);
 	float P,I,D;
 	pid->err = pid->target_val - curr_val;
-	pid->integral += pid->err;
+	pid->integral += pid->err*pid->dt;
 	
 	/* anti-windup */
 	pid->integral = _constrains(pid->integral,pid->int_limit,-pid->int_limit);
 	/* output limit */
 	P = pid->Kp*pid->err;
-	I = pid->Ki*pid->integral*pid->dt;
+	I = pid->Ki*pid->integral;
 	D = pid->Kd*(pid->err - pid->err_prev)/pid->dt;
 	
 	pid->control_u = P + I + D;

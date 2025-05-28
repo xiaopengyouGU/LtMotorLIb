@@ -28,7 +28,6 @@ static lt_node_t _node_get(lt_node_t list,char* name)
 	return RT_NULL;
 }
 
-
 static lt_node_t _node_create(lt_motor_t motor,char*name)
 {
 	lt_node_t _node = rt_malloc(sizeof(struct lt_motor_node_object));
@@ -155,18 +154,18 @@ static void _manager_info(int type)
 		rt_kprintf("Author: LvTou, Date: 2025/4/22, Version: 0.2 \n");
 		rt_kprintf("LtMotorLib supports finsh and simple pid interface to help you control motors !\n ");
 		rt_kprintf("Input like this 'ltmotorlib motor cmd' to call correspond functions \n");
-		rt_kprintf("Input 'ltmotorlib list (motor)' to see motor(s) information \n");
+		rt_kprintf("Input 'ltmotorlib list' to see motors' information \n");
 		rt_kprintf("Input 'ltmotorlib test motor' to config test motor \n");
 		rt_kprintf("Input 'ltmotorlib help' to see cmd called formats and details \n");
 		rt_kprintf("Hope you enjoy it!!! \n\n");
 	}
 	else if(type == MANAGER_HELP)
 	{
-		rt_kprintf("Input 'ltmotorlib list' to see motor(s) information \n");
+		rt_kprintf("Input 'ltmotorlib list' to see motors' information \n");
 		rt_kprintf("Input 'ltmotorlib test motor' to config test motor \n");
 		rt_kprintf("Note:  supported test motors: motor_dc, x_stepper, y_stepper \n");
 		rt_kprintf("LtMotorLib provides simple pid interface for user \n");
-		rt_kprintf("Notice that bellow 'motor' is your configured motor name!");
+		rt_kprintf("Notice that bellow 'motor' is your configured motor name! \n");
 		rt_kprintf("ltmotorlib call formats: \n\n");
 		rt_kprintf("******************* basic part ************************\n");
 		rt_kprintf("ltmotorlib motor output val \n");
@@ -174,17 +173,18 @@ static void _manager_info(int type)
 		rt_kprintf("ltmotorlib motor output_pid val \n");
 		rt_kprintf("ltmotorlib motor output_angle_pid val \n");
 		rt_kprintf("ltmotorlib motor get_pos \n");
-		rt_kprintf("ltmotorlib motor get_velocity \n");
+		rt_kprintf("ltmotorlib motor get_vel \n");
 		rt_kprintf("ltmotorlib motor disbale \n");
+		rt_kprintf("ltmotorlib motor delete \n");
 		rt_kprintf("******************* basic part ************************\n\n");
 		rt_kprintf("******************* stepper specified part ************************\n");
 		rt_kprintf("Note: the s_curve and 5_section output symmetric velocity curves and parameter units are as followed \n");
 		rt_kprintf("trapzoid  --> step: step, acc: Hz/ms,   dec:  Hz/ms speed: Hz \n");
-		rt_kprintf("s_curve   --> step: ms,   acc_t: ms,    freq: Hz, flexible: the bigger, the closer to s curve\n");
+		rt_kprintf("s_curve   --> step: gap,   acc_t: gap,  freq: Hz, flexible: the bigger, the closer to s curve\n");
 		rt_kprintf("5_section --> step: step, acc_t: ms,    speed: Hz \n\n");
 		rt_kprintf("ltmotorlib motor trapzoid step acc dec speed \n");
 		rt_kprintf("ltmotorlib motor s_curve step acc_t freq_max freq_min flexible \n");
-		rt_kprintf("ltmotorlib motor 5_section step acc_t speed");
+		rt_kprintf("ltmotorlib motor 5_section step acc_t speed \n");
 		rt_kprintf("ltmotorlib motor line_interp y_motor x_start, y_start, x_end, y_end \n");
 		rt_kprintf("ltmotorlib motor circular_interp y_motor x_start y_start x_end y_end  radius dir(CW/CCW) \n");
 		rt_kprintf("******************* stepper specified part ************************\n\n");
@@ -196,11 +196,12 @@ static void _manager_info(int type)
 		lt_node_t list = _manager->list;
 		lt_node_t curr = list->next;
 		struct lt_motor_info * info = &(_manager->info);
-		rt_kprintf("%*s %15s %15s %15s rad \n",LT_NAME_MAX+5,"NAME","TYPE","STATUS","POSITION");
+		rt_kprintf("%-*s %-15s %-15s %-15s \n",LT_NAME_MAX+5,"NAME","TYPE","STATUS","POSITION(degree)");
 		while(curr != list)
 		{
 			lt_motor_get_info(curr->motor,info);
-			rt_kprintf("%*s %15s %15s %15.2f \n",LT_NAME_MAX+5,info->name,_type[info->type],_status[info->status],info->position);
+			rt_kprintf("%-*s %-15s %-15s %-15.2f \n",LT_NAME_MAX+5,info->name,_type[info->type],_status[info->status],info->position*180.0f/PI);
+			curr = curr->next;
 		}
 	}
 }
@@ -264,7 +265,7 @@ static void _motor_basic(int argc,char *argv[],lt_motor_t motor, struct lt_motor
 /* stepper motor part */
 static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct lt_motor_info* info)
 {
-	rt_uint8_t flag;
+	rt_uint8_t flag = 0;
 	if(!rt_strcmp(argv[2],"trapzoid"))
 	{
 		if(argc == 7)		/* check paramaters */
@@ -307,7 +308,7 @@ static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct l
 		lt_motor_t y_motor = lt_manager_get_motor(argv[3]);
 		if(y_motor == RT_NULL)
 		{
-			rt_kprintf("there is no motor named:% !!! \n",argv[3]);
+			rt_kprintf("there is no motor named:%s !!! \n",argv[3]);
 			return;
 		}
 		else										/* check y_motor type*/
@@ -329,6 +330,7 @@ static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct l
 			if(argc == 8)				/* line interp */
 			{
 				test_stepper_line_interp(motor,y_motor,x_start,y_start,x_end,y_end);
+				flag = 1;
 			}
 			else						/* circular interp */
 			{
@@ -346,7 +348,6 @@ static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct l
 				}
 				test_stepper_circular_interp(motor,y_motor,x_start,y_start,x_end,y_end,radius,dir);
 			}
-			flag = 1;
 		}
 	}
 	if(!flag) _manager_info(MANAGER_UNVALID);
@@ -355,6 +356,8 @@ static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct l
 static void _motor_test_config(char* name)
 {
 	lt_motor_t motor = lt_manager_get_motor(name);
+	rt_err_t res;
+	
 	if(motor != RT_NULL)
 	{
 		rt_kprintf("already config motor: %s !!! \n",name);
@@ -363,19 +366,28 @@ static void _motor_test_config(char* name)
 	
 	if(!rt_strcmp(name,"motor_dc"))
 	{
-		test_motor_dc_config();
+		res = test_motor_dc_config();
 	}
 	else if(!rt_strcmp(name,"x_stepper"))
 	{
-		test_stepper_x_config();
+		res = test_stepper_x_config();
 	}
 	else if(!rt_strcmp(name,"y_stepper"))
 	{
-		test_stepper_y_config();
+		res = test_stepper_y_config();
 	}
 	else
 	{
-		rt_kprintf("there is no test motor named:% !!! \n",name);
+		rt_kprintf("there is no test motor named:%s !!! \n",name);
+		return;
+	}
+	if(res != RT_EOK)
+	{
+		rt_kprintf("config %s failed! \n",name);
+	}
+	else
+	{
+		rt_kprintf("config %s successfully! \n",name);
 	}
 }
 
@@ -417,17 +429,23 @@ static void ltmotorlib(int argc, char*argv[])
 	motor = lt_manager_get_motor(argv[1]);
 	if(motor == RT_NULL)
 	{
-		rt_kprintf("there is no motor named:% !!! \n",argv[1]);
+		rt_kprintf("there is no motor named:%s !!! \n",argv[1]);
 		return;
 	}
 	lt_motor_get_info(motor,info);				/* get motor info */
 	
 	/* check command */
-	if(!rt_strcmp(argv[2],"output") || !rt_strcmp(argv[2],"output_angle") || !rt_strcmp(argv[2],"get_pos") || !rt_strcmp(argv[2],"get_vel") || !rt_strcmp(argv[2],"output_pid") || !rt_strcmp(argv[2],"output_angle_pid"))
+	if(!rt_strcmp(argvp[2],"delete"))
+	{
+		lt_motor_delete(motor);
+		rt_kprintf("delete motor: %s successfully! \n",argv[1]);
+		return;
+	}
+	else if(!rt_strcmp(argv[2],"output") || !rt_strcmp(argv[2],"output_angle") || !rt_strcmp(argv[2],"get_pos") || !rt_strcmp(argv[2],"get_vel") || !rt_strcmp(argv[2],"output_pid") || !rt_strcmp(argv[2],"output_angle_pid") || !rt_strcmp(argv[2],"disable") )
 	{	/* motor basic part*/
 		_motor_basic(argc,argv,motor,info);
 	}
-	else if(!rt_strcmp(argv[2],"trapzoid") || !rt_strcmp(argv[2],"s_curve") || !rt_strcmp(argv[2],"line_interp") || !rt_strcmp(argv[2],"circular_interp"))
+	else if(!rt_strcmp(argv[2],"trapzoid") || !rt_strcmp(argv[2],"s_curve") ||!rt_strcmp(argv[2],"5_section") || !rt_strcmp(argv[2],"line_interp") || !rt_strcmp(argv[2],"circular_interp"))
 	{	/* stepper motor part */
 		if(info->type != MOTOR_TYPE_STEPPER)	/* check motor type */
 		{
@@ -435,6 +453,10 @@ static void ltmotorlib(int argc, char*argv[])
 			return;
 		}
 		_motor_stepper_part(argc,argv,motor,info);
+	}
+	else
+	{
+		_manager_info(MANAGER_UNVALID);
 	}
 	
 }

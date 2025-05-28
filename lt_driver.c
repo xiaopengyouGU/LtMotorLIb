@@ -1,8 +1,7 @@
 #include "ltmotorlib.h"
 
-
 extern struct lt_driver_ops _driver_dc_ops;
-//extern struct lt_motor_ops _motor_bldc_ops;
+extern struct lt_driver_ops _driver_bldc_ops;
 extern struct lt_driver_ops _driver_stepper_ops;
 
 lt_driver_t lt_driver_create(rt_uint8_t type)
@@ -20,9 +19,9 @@ lt_driver_t lt_driver_create(rt_uint8_t type)
 		case DRIVER_TYPE_STEPPER:
 			_driver->ops = &_driver_stepper_ops;
 			break;
-		//case DRIVER_TYPE_STEPPER:
-		//	_driver->ops = &_driver_bldc_ops;
-		//	break;
+		case DRIVER_TYPE_BLDC:
+			_driver->ops = &_driver_bldc_ops;
+			break;
 		default: break;
 	}
 	return _driver;
@@ -124,7 +123,7 @@ rt_err_t lt_driver_enable(lt_driver_t driver,rt_uint8_t dir)
 rt_err_t lt_driver_disable(lt_driver_t driver)
 {
 	RT_ASSERT(driver != RT_NULL);
-	RT_ASSERT(driver->ops!= RT_NULL);
+	RT_ASSERT(driver->ops != RT_NULL);
 	RT_ASSERT(driver->ops->disable != RT_NULL);
 	return driver->ops->disable(driver);
 }
@@ -132,6 +131,22 @@ rt_err_t lt_driver_disable(lt_driver_t driver)
 rt_err_t lt_driver_delete(lt_driver_t driver)
 {
 	RT_ASSERT(driver != RT_NULL);
+	if(driver->pwm_A != RT_NULL)
+	{
+		rt_pwm_disable(driver->pwm_A,driver->pwm_channel_A);
+		driver->pwm_A = RT_NULL;
+	}
+	if(driver->pwm_B != RT_NULL)
+	{
+		rt_pwm_disable(driver->pwm_B,driver->pwm_channel_B);
+		driver->pwm_B = RT_NULL;
+	}
+	if(driver->pwm_C != RT_NULL)
+	{
+		rt_pwm_disable(driver->pwm_C,driver->pwm_channel_C);
+		driver->pwm_C = RT_NULL;
+	}
+
 	rt_free(driver);
 	return RT_EOK;
 }
