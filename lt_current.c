@@ -9,17 +9,18 @@ lt_current_t lt_current_create(float resistor, float amp_gain, rt_uint8_t bit_nu
 {
 	if(resistor <= 0 || amp_gain == 0 || bit_num == 0) return RT_NULL;
 	lt_current_t _current;
-	lt_filter_t _filter = lt_filter_create(_TF,0);
+	lt_filter_t _filter_d = lt_filter_create(_TF,0);
+	lt_filter_t _filter_q = lt_filter_create(_TF,0);
 	_current = rt_malloc(sizeof(struct lt_current_sense_object));
 	if(_current == RT_NULL) return RT_NULL;
-	if(_filter == RT_NULL) return RT_NULL;
+	if(_filter_d == RT_NULL || _filter_q == RT_NULL) return RT_NULL;
 	rt_memset(_current,0,sizeof(struct lt_current_sense_object));
 	
 	_current->resistor = resistor;
 	_current->amp_gain = amp_gain;
 	_current->bit_num = bit_num;
-	_current->lpf = _filter;
-	
+	_current->lpf_d = _filter_d;
+	_current->lpf_q = _filter_q;
 	return _current;
 }
 
@@ -84,33 +85,72 @@ rt_err_t lt_current_get(lt_current_t current, float*Ia, float*Ib, float*Ic)
 	return RT_EOK;
 }
 
-float lt_current_get_iq(lt_current_t current, float angle,float dt)
+rt_err_t lt_current_get_ab(lt_current_t current, float angle, float * _I_alpha, float * _I_beta)
+{
+	RT_ASSERT(current != RT_NULL);
+	RT_ASSERT(current->adc != RT_NULL);
+	if(current->channel_A < 0 && current->channel_B < 0 && current->channel_C < 0) return RT_ERROR;
+	float Ia, Ib, Ic;
+	
+	_current_get(current,&Ia,&Ib,&Ic);
+	_clark_trans(Ia,Ib,Ic,_I_alpha,_I_beta);
+	return RT_EOK;
+}
+
+rt_err_t lt_current_get_dq(lt_current_t current, float angle,float dt, float * _Id, float * _Iq)
 {
 	RT_ASSERT(current != RT_NULL);
 	RT_ASSERT(current->adc != RT_NULL);
 	if(current->channel_A < 0 && current->channel_B < 0 && current->channel_C < 0) return RT_ERROR;
 	float Ia, Ib, Ic;
 	float I_alpha, I_beta;
-	float Iq,_c,_s;
+	float Id,Iq;
 	
 	_current_get(current,&Ia,&Ib,&Ic);
 	/* Clark transform */
-	I_alpha = 2.0f/3 * (Ia - Ib - Ic);
-	I_beta = SQRT_3/3 * Ib - SQRT_3/3 * Ic;
+	_clark_trans(Ia,Ib,Ic,&I_alpha,&I_beta);
 	/* Park transform ,check angle */
-	angle = _normalize_angle(angle);
-	_c = cosf(angle);
-	_s = sinf(angle);
-	Iq = -_s*I_alpha + _c*I_beta;
-	
+	_park_trans(I_alpha,I_beta,angle,&Id,&Iq);
 	/* low pass filter process */
 	if(dt >= 0)							/* sample time, unit: s */
 	{
-		lt_filter_set_dt(current->lpf,dt);
-		Iq = lt_filter_process(current->lpf,Iq);
+		lt_filter_set_dt(current->lpf_d,dt);
+		lt_filter_set_dt(current->lpf_q,dt);
+		Id = lt_filter_process(current->lpf_d,Id);
+		Iq = lt_filter_process(current->lpf_q,Iq);
 	}
+	*_Id = Id;
+	*_Iq = Iq;
 	
-	return Iq;
+	return RT_EOK;
+}
+
+rt_err_t lt_current_get_info(lt_current_t current, float angle, struct lt_current_info* info)
+{
+	RT_ASSERT(current != RT_NULL);
+	RT_ASSERT(current->adc != RT_NULL);
+	RT_ASSERT(info != RT_NULL);
+	if(current->channel_A < 0 && current->channel_B < 0 && current->channel_C < 0) return RT_ERROR;
+	float Ia, Ib, Ic;
+	float I_alpha, I_beta;
+	float Id,Iq;
+	angle = _normalize_angle(angle);
+	_current_get(current,&Ia,&Ib,&Ic);
+	/* Clark transform */
+	_clark_trans(Ia,Ib,Ic,&I_alpha,&I_beta);
+	/* Park transform ,check angle */
+	_park_trans(I_alpha,I_beta,angle,&Id,&Iq);
+	
+	/* get result */
+	info->Ia = Ia;
+	info->Ib = Ib;
+	info->Ic = Ic;
+	info->I_alpha = I_alpha;
+	info->I_beta = I_beta;
+	info->Id = Id;
+	info->Iq = Iq;
+	
+	return RT_EOK;
 }
 
 rt_err_t lt_current_delete(lt_current_t current)
@@ -123,10 +163,15 @@ rt_err_t lt_current_delete(lt_current_t current)
 		rt_adc_disable(current->adc,current->channel_C);
 		current->adc = RT_NULL;
 	}
-	if(current->lpf != RT_NULL)
+	if(current->lpf_d != RT_NULL)
 	{
-		lt_filter_delete(current->lpf);
-		current->lpf = RT_NULL;
+		lt_filter_delete(current->lpf_d);
+		current->lpf_d = RT_NULL;
+	}
+	if(current->lpf_q != RT_NULL)
+	{
+		lt_filter_delete(current->lpf_q);
+		current->lpf_q = RT_NULL;
 	}
 	
 	rt_free(current);

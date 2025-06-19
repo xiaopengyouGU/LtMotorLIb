@@ -1,24 +1,14 @@
 /**
   ******************************************************************************
-  * @file    protocol.c
-  * @version V1.0
-  * @date    2020-xx-xx
-  * @brief   野火PID调试助手通讯协议解析
-  ******************************************************************************
-  * @attention
-  *
-  * 实验平台:野火 F407 开发板 
-  * 论坛    :http://www.firebbs.cn
-  * 淘宝    :https://fire-stm32.taobao.com
-  *
-  ******************************************************************************
+  * @brief   野火PID调试助手通讯协议解析 + DAC output protocol
+  *****************************************************************************
   */ 
 
 #include "protocol.h"
 #include <string.h>
 #include "ltmotorlib.h"
 
-
+#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
 static struct prot_frame_parser_t parser;
 
 static rt_uint8_t recv_buf[PROT_FRAME_LEN_RECV];
@@ -325,7 +315,36 @@ static struct lt_commun_ops _ops = {	_protocol_send,
 										_protocol_data_recv,
 };
 
+#else
+static void _dac_send(lt_commun_t communicator,int cmd,rt_uint8_t channel,void*data,rt_uint8_t num)
+{
+	rt_dac_device_t dac_dev = (rt_dac_device_t)(communicator->dev);
+	int value = *(int *)data;
+	value = _constrains(value,2047,-2048);
+	if(channel != 1 && channel != 2)
+	{
+		rt_kprintf("unvalid channel, you should input channel1 or channel2! \n");
+	}
+	if(cmd != SEND_FACT_CMD)
+	{
+		rt_kprintf("only support SEND_FACT_CMD command! \n");
+	}
+	
+	/* this dac device support 12bits output */
+	rt_dac_write(dac_dev,channel,2048+value);
+}
 
+static void _dac_process(lt_commun_t communicator, void*info)
+{
+	rt_kprintf("communicator for oscilloscope doesn't support receive function! \n");
+}
+
+static struct lt_commun_ops _ops = {	_dac_send,									
+										RT_NULL,
+										RT_NULL,
+};
+
+#endif
 
 /**
  * @brief   初始化接收协议
@@ -334,15 +353,20 @@ static struct lt_commun_ops _ops = {	_protocol_send,
  */
 int32_t protocol_init(void)
 {
+#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
 	memset(&parser, 0, sizeof(struct prot_frame_parser_t));
     
     /* 初始化分配数据接收与解析缓冲区*/
     parser.recv_ptr = recv_buf;
 	
 	/* set communicator */
-	lt_communicator_set("uart1",PROT_FRAME_LEN_RECV,&_ops);
+	lt_communicator_set(COMMUNICATOR_DEV_NAME,PROT_FRAME_LEN_RECV,&_ops);
+#else
+	lt_communicator_set(COMMUNICATOR_DEV_NAME,0,&_ops);
+#endif
 	return 0;
 }
+
 
 INIT_DEVICE_EXPORT(protocol_init);			/* init protocol automatically */
 

@@ -206,7 +206,7 @@ rt_uint8_t _check_end(int x_pos, int y_pos, int x_target, int y_target,rt_uint8_
 rt_int32_t _get_count(float curr, float last,rt_int32_t count, rt_uint8_t volt)
 {
 	float dist = curr - last;
-	if (dist == 0) return 0;
+	if (dist == 0) return count;
 	
 	if(volt)			/* value increase counter-clockwise */
 	{
@@ -230,7 +230,6 @@ rt_int32_t _get_count(float curr, float last,rt_int32_t count, rt_uint8_t volt)
 			count = count - 1;
 		}
 	}
-	
 	return count;
 }
 
@@ -243,9 +242,42 @@ float _normalize_angle(float angle_el)
 	}
 	else
 	{
-		angle_el = angle_el - n * 2 *PI;
+		angle_el -= n * 2 *PI;
 	}
+	angle_el = 2*PI - angle_el;
 	return angle_el;
 }
 
+void _clark_trans(float fa, float fb, float fc, float*f_alpha, float*f_beta)
+{
+	/* Clark transform */
+	*f_alpha = 2.0f/3 * (fa - 0.5f*fb - 0.5f*fc);
+	*f_beta = SQRT_3/3 * (fb - fc);
+}
+
+void _park_trans(float f_alpha, float f_beta, float angle, float*fd, float*fq)
+{
+	/* Park transform */
+	float _c = cosf(angle);
+	float _s = sinf(angle);
+	*fd = _c*f_alpha + _s*f_beta; 
+	*fq = -_s*f_alpha + _c*f_beta;
+}
+
+void _clark_inv_trans(float f_alpha, float f_beta, float*fa, float*fb, float*fc)
+{
+	/* Clark inverse transform */
+	*fa = f_alpha;
+	*fb = -0.5f*f_alpha + SQRT_3/2*f_beta;
+	*fc = -0.5f*f_alpha - SQRT_3/2*f_beta;
+}
+
+void _park_inv_trans(float fd, float fq, float angle, float*f_alpha, float*f_beta)
+{
+	/* Park inverse transform */
+	float _c = cosf(angle);
+	float _s = sinf(angle);
+	*f_alpha = _c*fd - _s*fq;
+	*f_beta  = _s*fd + _c*fq;
+}
 

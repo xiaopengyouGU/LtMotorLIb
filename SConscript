@@ -5,6 +5,6 @@ cwd = GetCurrentDir()
 src = Glob('*.c')
 CPPPATH = [cwd]
     
-group = DefineGroup('motor_control', src, depend = [''], CPPPATH = CPPPATH)
+group = DefineGroup('ltmotorlib', src, depend = [''], CPPPATH = CPPPATH)
 
 Return('group')

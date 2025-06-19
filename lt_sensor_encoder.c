@@ -41,7 +41,6 @@ static lt_sensor_t _sensor_encoder_create(char* sensor_name,rt_uint16_t resoluti
 
 float _sensor_encoder_get_angle(lt_sensor_t sensor)
 {
-	
 	rt_device_t encoder = sensor->dev;
 	rt_int32_t count;
 	float position;
@@ -51,7 +50,6 @@ float _sensor_encoder_get_angle(lt_sensor_t sensor)
 	
 	position = (float)(-count)/(sensor->resolution);		/* notice direction! */
 	position *= 2*PI;										/* unit: rad */
-	
 	return position;
 }
 

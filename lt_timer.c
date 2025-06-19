@@ -111,7 +111,7 @@ rt_err_t lt_timer_delete(lt_timer_t timer)
 rt_err_t lt_timer_period_call(lt_timer_t timer,rt_uint32_t period, void(*timeout)(lt_timer_t),void* user_data,rt_uint8_t type)
 {
 	RT_ASSERT(timer != RT_NULL);
-	rt_err_t res;
+	rt_err_t res = RT_EOK;
 	timer->user_data = user_data;
 	res |= _disable_timer(timer,type);			/* disable timer at first */
 	res |= _set_timer(timer,period,TIMER_MODE_PERIODIC,type);

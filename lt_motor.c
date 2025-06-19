@@ -9,11 +9,9 @@ lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t t
 	lt_motor_t _motor;
 	if(reduction_ration == 0) reduction_ration = 1;
 	
-#ifdef LT_USING_MOTOR_MSH_TEST
-	/* check whether motor is in manager */
+	/* check whether the motor is in the manager */
 	_motor = lt_manager_get_motor(name);
 	if(_motor != RT_NULL)	return RT_NULL;		/* motor is already in the mananger */
-#endif
 	
 	switch(type)
 	{
@@ -32,9 +30,8 @@ lt_motor_t lt_motor_create(char* name, rt_uint8_t reduction_ration, rt_uint8_t t
 			_motor = _motor_stepper_ops.create(name,reduction_ration,type);
 		}
 	}
-#ifdef LT_USING_MOTOR_MSH_TEST
 	lt_manager_add_motor(_motor);		/* add motor to manager */
-#endif
+
 	return _motor;
 }
 
@@ -46,10 +43,11 @@ rt_err_t lt_motor_set_driver(lt_motor_t motor, lt_driver_t driver)
 	return RT_EOK;
 }
 
-rt_err_t lt_motor_set_callback(lt_motor_t motor, rt_err_t (*callback)(void*) )
+rt_err_t lt_motor_set_callback(lt_motor_t motor, rt_err_t (*callback)(void*), void*call_param)
 {
 	RT_ASSERT(motor != RT_NULL);
 	motor->callback = callback;
+	motor->call_param = call_param;
 	return RT_EOK;
 }
 
@@ -73,6 +71,10 @@ rt_err_t lt_motor_set_pid(lt_motor_t motor,lt_pid_t pid,rt_uint8_t pid_type)
 	else if(pid_type == PID_TYPE_POS)
 	{
 		motor->pid_pos = pid;
+	}
+	else if(pid_type == PID_TYPE_CURRENT)
+	{
+		motor->pid_current = pid;
 	}
 	
 	return RT_EOK;
@@ -137,15 +139,13 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 		{
 			float* velocity = (float*)arg;
 			motor->pid_type = PID_TYPE_VEL;
-			_output_pid(motor,*velocity);
-			break;
+			return _output_pid(motor,*velocity);
 		}
 		case MOTOR_CTRL_OUTPUT_ANGLE_PID:
 		{
 			float* position = (float*)arg;
 			motor->pid_type = PID_TYPE_POS;
-			_output_pid(motor,*position);
-			break;
+			return _output_pid(motor,*position);
 		}
 		case MOTOR_CTRL_GET_STATUS:
 		{
@@ -174,7 +174,6 @@ rt_err_t lt_motor_control(lt_motor_t motor, int cmd, void* arg)
 		default:
 		{
 			return motor->ops->control(motor,cmd,arg);
-			break;
 		}
 	}
 	
@@ -201,9 +200,8 @@ rt_err_t lt_motor_delete(lt_motor_t motor)
 	RT_ASSERT(motor->ops != RT_NULL);
 	RT_ASSERT(motor->ops->_delete != RT_NULL);
 	_disable_motor(motor);
-#ifdef LT_USING_MOTOR_MSH_TEST
 	lt_manager_delete_motor(motor);				/* move motor from the manager */
-#endif
+	
 	return motor->ops->_delete(motor);
 }
 
@@ -225,7 +223,7 @@ static rt_err_t _disable_motor(lt_motor_t motor)
 
 static void _output_pid_timeout(lt_timer_t timer)
 {
-	lt_motor_t motor = (lt_motor_t)timer;
+	lt_motor_t motor = (lt_motor_t)timer->user_data;
 	/* check pid type*/
 	lt_pid_t pid;
 	float feedback, control_u;
@@ -251,6 +249,7 @@ static rt_err_t _output_pid(lt_motor_t motor,float target)
 	if(motor->sensor == RT_NULL || motor->driver == RT_NULL || motor->timer == RT_NULL) return RT_ERROR;
 	lt_pid_t pid;
 	lt_timer_t timer = motor->timer;
+	rt_err_t res;
 	
 	if(motor->pid_type == PID_TYPE_VEL)
 	{
@@ -264,10 +263,10 @@ static rt_err_t _output_pid(lt_motor_t motor,float target)
 	
 	lt_pid_set_target(pid,target);
 	/* config hw_timer and start  */
-	lt_timer_period_call(timer,pid->dt*1000000,_output_pid_timeout,motor,TIMER_TYPE_HW);	/* unit: s --> us */
+	res = lt_timer_period_call(timer,pid->dt*1000000,_output_pid_timeout,motor,TIMER_TYPE_HW);	/* unit: s --> us */
 	motor->status = MOTOR_STATUS_RUN;
 	
-	return RT_EOK;
+	return res;
 }
 
 

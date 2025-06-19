@@ -11,12 +11,12 @@ static void _timer_output_angle(lt_timer_t timer)
 	stepper->parent.status = MOTOR_STATUS_STOP;
 	if(stepper->parent.callback)					/* call done callback function */
 	{
-		stepper->parent.callback(RT_NULL);
+		stepper->parent.callback(stepper->parent.call_param);
 	}
 }
 
-static void _motor_stepper_output_angle(lt_stepper_t stepper,float angle);
-static void _motor_stepper_output(lt_stepper_t stepper, float input);
+static rt_err_t _motor_stepper_output_angle(lt_stepper_t stepper,float angle);
+static rt_err_t _motor_stepper_output(lt_stepper_t stepper, float input);
 static void _motor_stepper_config(lt_stepper_t,struct lt_stepper_config* config);
 static rt_err_t _motor_stepper_accelerate(lt_stepper_t stepper,struct lt_curve_config* config);
 static rt_err_t _motor_stepper_interp(lt_stepper_t stepper,struct lt_interp_config* config);
@@ -49,15 +49,13 @@ static rt_err_t _motor_stepper_control(lt_motor_t motor, int cmd, void*arg)
 		case MOTOR_CTRL_OUTPUT:
 		{
 			float input = *(float *)arg;
-			_motor_stepper_output(stepper,input);
-			break;
+			return _motor_stepper_output(stepper,input);
 		}
 		case MOTOR_CTRL_OUTPUT_ANGLE:
 		{
 			if(motor->timer == RT_NULL) return RT_ERROR;
 			float angle = *(float *)arg;
-			_motor_stepper_output_angle(stepper,angle);
-			break;
+			return _motor_stepper_output_angle(stepper,angle);
 		}
 		case STEPPER_CTRL_CONFIG:		/* config stepper parameters */
 		{
@@ -108,11 +106,11 @@ struct lt_motor_ops _motor_stepper_ops = {
 										_motor_stepper_delete,
 									 };
 
-static void _motor_stepper_output(lt_stepper_t stepper, float input)
+static rt_err_t _motor_stepper_output(lt_stepper_t stepper, float input)
 {
 	/* rotate at a constant speed */
 	/* speed is proportional to frequency */
-	if(!(stepper->flag & FLAG_STEPPER_CONFIG))	return;							/* not configured */
+	if(!(stepper->flag & FLAG_STEPPER_CONFIG))	return RT_ERROR;							/* not configured */
 	rt_uint8_t dir = _get_rotation_dir(input);									/* get rotation direction  */
 	input = _absf(input);
 	lt_driver_t driver = stepper->parent.driver;
@@ -132,11 +130,12 @@ static void _motor_stepper_output(lt_stepper_t stepper, float input)
 		lt_driver_enable(driver,dir);											/* enable output */
 		stepper->parent.status = MOTOR_STATUS_RUN;
 	}
+	return RT_EOK;
 }
 
-static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
+static rt_err_t _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 {	/* in open loop case, we just use software timer to save hardware timer */
-	if(!(stepper->flag & FLAG_STEPPER_CONFIG))	return;							/* not configured */
+	if(!(stepper->flag & FLAG_STEPPER_CONFIG))	return RT_ERROR;							/* not configured */
 	rt_uint8_t dir = _get_rotation_dir(angle);			/* get rotation direction */
 	angle = _absf(angle);
 	lt_driver_t driver = stepper->parent.driver;
@@ -146,7 +145,7 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 	if(angle == 0)
 	{
 		stepper->parent.status = MOTOR_STATUS_STOP;
-		return;
+		return RT_EOK;
 	}
 	/* get number of square pulse */
 	rt_uint32_t n = angle/(stepper->angle/stepper->subdivide);		
@@ -156,6 +155,8 @@ static void _motor_stepper_output_angle(lt_stepper_t stepper, float angle)
 	lt_driver_set_output(driver,period,STEPPER_DUTY_CYCLE);
 	lt_driver_enable(driver,dir);
 	stepper->parent.status = MOTOR_STATUS_RUN;	/* output */
+	
+	return RT_EOK;
 }
 
 static void _motor_stepper_config(lt_stepper_t stepper,struct lt_stepper_config* config)
@@ -184,7 +185,7 @@ void _hw_timer_callback_accel(lt_timer_t timer)
 		stepper->parent.status = MOTOR_STATUS_STOP;
 		if(stepper->parent.callback)							/* call done callback function */
 		{
-			stepper->parent.callback(RT_NULL);
+			stepper->parent.callback(stepper->parent.call_param);
 		}
 		return;
 	}
@@ -272,11 +273,11 @@ void _timer_callback_interp(lt_timer_t timer)
 		y_motor->status = MOTOR_STATUS_STOP;
 		if(stepper->parent.callback)							/* call done callback function */
 		{
-			stepper->parent.callback(RT_NULL);
+			stepper->parent.callback(stepper->parent.call_param);
 		}
 		if(y_motor->callback)
 		{
-			y_motor->callback(RT_NULL);
+			y_motor->callback(y_motor->call_param);
 		}
 		return;
 	}

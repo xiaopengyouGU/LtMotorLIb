@@ -1,13 +1,5 @@
 #include "ltmotorlib.h"
 #include "stdlib.h"
-/* use FINSH to help test functions */
-#ifdef RT_USING_FINSH
-#ifdef LT_USING_MOTOR_MSH_TEST
-#define MANAGER_UNVALID				0x00
-#define MANAGER_INTRO				0x01
-#define MANAGER_HELP				0x02
-#define MANAGET_LIST				0x03
-
 lt_manager_t _manager;
 
 static lt_node_t _node_get(lt_node_t list,char* name)
@@ -139,8 +131,17 @@ rt_err_t lt_manager_delete(void)
 	rt_free(_manager);			/* release memory */
 	return RT_EOK;
 }
+INIT_DEVICE_EXPORT(lt_manager_create);			/* create motor manager automatically */
 
+/* use FINSH to help test functions */
+#ifdef RT_USING_FINSH
+#ifdef LT_USING_MOTOR_MSH_TEST
 /* list motors  */
+#define MANAGER_UNVALID				0x00
+#define MANAGER_INTRO				0x01
+#define MANAGER_HELP				0x02
+#define MANAGER_LIST				0x03
+#define MANAGER_PID					0x04
 static void _manager_info(int type)
 {
 	if(type == MANAGER_UNVALID)
@@ -156,6 +157,7 @@ static void _manager_info(int type)
 		rt_kprintf("Input like this 'ltmotorlib motor cmd' to call correspond functions \n");
 		rt_kprintf("Input 'ltmotorlib list' to see motors' information \n");
 		rt_kprintf("Input 'ltmotorlib test motor' to config test motor \n");
+		rt_kprintf("Input 'ltmotorlib pid' to see close loop pid details \n");
 		rt_kprintf("Input 'ltmotorlib help' to see cmd called formats and details \n");
 		rt_kprintf("Hope you enjoy it!!! \n\n");
 	}
@@ -163,6 +165,7 @@ static void _manager_info(int type)
 	{
 		rt_kprintf("Input 'ltmotorlib list' to see motors' information \n");
 		rt_kprintf("Input 'ltmotorlib test motor' to config test motor \n");
+		rt_kprintf("Input 'ltmotorlib pid' to see close loop pid details \n");
 		rt_kprintf("Note:  supported test motors: motor_dc, x_stepper, y_stepper \n");
 		rt_kprintf("LtMotorLib provides simple pid interface for user \n");
 		rt_kprintf("Notice that bellow 'motor' is your configured motor name! \n");
@@ -189,9 +192,11 @@ static void _manager_info(int type)
 		rt_kprintf("ltmotorlib motor circular_interp y_motor x_start y_start x_end y_end  radius dir(CW/CCW) \n");
 		rt_kprintf("******************* stepper specified part ************************\n\n");
 		rt_kprintf("******************* bldc specified part ************************\n");
+		rt_kprintf("ltmotorlib motor elec_info \n");
+		rt_kprintf("ltmotorlib motor torque value\n");
 		rt_kprintf("******************* bldc specified part ************************\n\n");
 	}
-	else if(type == MANAGET_LIST)
+	else if(type == MANAGER_LIST)
 	{
 		lt_node_t list = _manager->list;
 		lt_node_t curr = list->next;
@@ -204,7 +209,22 @@ static void _manager_info(int type)
 			curr = curr->next;
 		}
 	}
+	else if(type == MANAGER_PID)
+	{
+		rt_kprintf("LtMotorLib provides pid adjust interface for user \n");
+		rt_kprintf("This part is coorporated with communicator for oscilloscope \n");
+		rt_kprintf("Note: dac output voltage (dV), dV < 1.65V : (-); dV > 1.65V : (+) \n");
+		rt_kprintf("supported pid type: pid_vel/pid_pos/pid_current \n");
+		rt_kprintf("current pid is only for BLDC motor\n");
+		rt_kprintf("ltmotorlib motor pid_type set Kp Ki Kd \n");
+		rt_kprintf("ltmotorlib motor pid_type set_target value \n");
+		rt_kprintf("ltmotorlib motor pid_type set_dt time(ms) \n");
+		rt_kprintf("ltmotorlib motor pid_type reset \n ");
+		rt_kprintf("ltmotorlib mtoor pid_start \n");
+		rt_kprintf("ltmotorlib motor pid_stop \n ");
+	}
 }
+
 /* motor basic part */
 static void _motor_basic(int argc,char *argv[],lt_motor_t motor, struct lt_motor_info* info)
 {
@@ -353,6 +373,111 @@ static void _motor_stepper_part(int argc,char *argv[],lt_motor_t motor, struct l
 	if(!flag) _manager_info(MANAGER_UNVALID);
 }
 
+/* bldc motor part */
+static void _motor_bldc_part(int argc,char *argv[],lt_motor_t motor, struct lt_motor_info* info)
+{
+	rt_uint8_t flag = 0;
+	if(!rt_strcmp(argv[2],"torque"))
+	{
+		if(argc == 4)		/* check paramaters */
+		{
+			float input = (float)atof(argv[3]);
+			test_bldc_torque(motor,input);
+			flag = 1;
+		}
+	}
+	else if(!rt_strcmp(argv[2],"elec_info"))
+	{
+		if(argc == 3)		/* check paramaters */
+		{
+			test_bldc_elec_info(motor);
+			flag = 1;
+		}
+	}
+	
+	if(!flag) _manager_info(MANAGER_UNVALID);
+}
+
+static void _motor_close_loop_part(int argc,char *argv[],lt_motor_t motor, struct lt_motor_info* info)
+{
+	rt_uint8_t flag = 0;
+	lt_timer_t timer = motor->timer;
+	if(!rt_strcmp(argv[2],"pid_vel") || !rt_strcmp(argv[2],"pid_pos") || !rt_strcmp(argv[2],"pid_current"))
+	{
+		lt_pid_t pid;
+		if(!rt_strcmp(argv[2],"pid_vel"))
+		{
+			pid = motor->pid_vel;
+		}
+		else if(!rt_strcmp(argv[2],"pid_pos"))
+		{
+			pid = motor->pid_pos;
+		}
+		else if(!rt_strcmp(argv[3],"pid_current"))
+		{
+			if(info->type != MOTOR_TYPE_BLDC)
+			{
+				rt_kprintf("motor %s type is incorrect! expected: %s , actual: %s !!!\n",info->name, _type[MOTOR_TYPE_BLDC],_type[info->type]);
+				return;
+			}
+		}
+		/* check paramaters */
+		if(argc < 4){
+			_manager_info(MANAGER_UNVALID);
+			return;
+		};
+		if(!rt_strcmp(argv[3],"set"))	/* set pid */
+		{
+			if(argc == 7)
+			{
+				float Kp = atof(argv[4]);
+				float Ki = atof(argv[5]);
+				float Kd = atof(argv[6]);
+				lt_pid_set(pid,Kp,Ki,Kd);
+				flag = 1;
+			}
+		}
+		else if(!rt_strcmp(argv[3],"set_target"))
+		{
+			if(argc == 5)
+			{
+				float target = atof(argv[4]);
+				lt_pid_set_target(pid,target);
+				flag = 1;
+			}
+		}
+		else if(!rt_strcmp(argv[3],"set_dt"))
+		{
+			if(argc == 5)
+			{
+				float dt = atof(argv[4]);
+				lt_pid_set_dt(pid,dt);
+				flag = 1;
+			}
+		}
+		else if(!rt_strcmp(argv[3],"reset"))
+		{
+			lt_pid_reset(pid);
+			lt_motor_disable(motor);
+			lt_timer_disable(timer,TIMER_TYPE_HW);
+			flag = 1;
+		}
+	}
+	else if(!rt_strcmp(argv[2],"stop"))
+	{
+		lt_motor_disable(motor);
+		lt_timer_disable(timer,TIMER_TYPE_HW);
+		flag = 1;
+	}
+	else if(!rt_strcmp(argv[2],"start"))
+	{
+		lt_timer_enable(timer,TIMER_TYPE_HW);
+		flag = 1;
+	}
+	
+	if(!flag) _manager_info(MANAGER_UNVALID);
+}
+
 static void _motor_test_config(char* name)
 {
 	lt_motor_t motor = lt_manager_get_motor(name);
@@ -376,6 +501,14 @@ static void _motor_test_config(char* name)
 	{
 		res = test_stepper_y_config();
 	}
+	else if(!rt_strcmp(name,"x_bldc"))
+	{
+		res = test_bldc_x_config();
+	}
+	else if(!rt_strcmp(name,"y_bldc"))
+	{
+		res = test_bldc_y_config();
+	}
 	else
 	{
 		rt_kprintf("there is no test motor named:%s !!! \n",name);
@@ -390,7 +523,6 @@ static void _motor_test_config(char* name)
 		rt_kprintf("config %s successfully! \n",name);
 	}
 }
-
 
 static void ltmotorlib(int argc, char*argv[])
 {
@@ -407,11 +539,15 @@ static void ltmotorlib(int argc, char*argv[])
 	{
 		if(!rt_strcmp(argv[1],"list"))
 		{
-			_manager_info(MANAGET_LIST);
+			_manager_info(MANAGER_LIST);
 		}
 		else if(!rt_strcmp(argv[1],"help"))
 		{
 			_manager_info(MANAGER_HELP);
+		}
+		else if(!rt_strcmp(argv[1],"pid"))
+		{
+			_manager_info(MANAGER_PID);
 		}
 		else
 		{
@@ -432,10 +568,9 @@ static void ltmotorlib(int argc, char*argv[])
 		rt_kprintf("there is no motor named:%s !!! \n",argv[1]);
 		return;
 	}
-	lt_motor_get_info(motor,info);				/* get motor info */
 	
 	/* check command */
-	if(!rt_strcmp(argvp[2],"delete"))
+	if(!rt_strcmp(argv[2],"delete"))
 	{
 		lt_motor_delete(motor);
 		rt_kprintf("delete motor: %s successfully! \n",argv[1]);
@@ -447,6 +582,7 @@ static void ltmotorlib(int argc, char*argv[])
 	}
 	else if(!rt_strcmp(argv[2],"trapzoid") || !rt_strcmp(argv[2],"s_curve") ||!rt_strcmp(argv[2],"5_section") || !rt_strcmp(argv[2],"line_interp") || !rt_strcmp(argv[2],"circular_interp"))
 	{	/* stepper motor part */
+		lt_motor_get_info(motor,info);			/* get motor info */
 		if(info->type != MOTOR_TYPE_STEPPER)	/* check motor type */
 		{
 			rt_kprintf("motor %s type is incorrect! expected: %s , actual: %s !!!\n",info->name, _type[MOTOR_TYPE_STEPPER],_type[info->type]);
@@ -454,6 +590,21 @@ static void ltmotorlib(int argc, char*argv[])
 		}
 		_motor_stepper_part(argc,argv,motor,info);
 	}
+	else if(!rt_strcmp(argv[2],"torque") || !rt_strcmp(argv[2],"elec_info"))
+	{	/* bldc motor part */
+		lt_motor_get_info(motor,info);		/* get motor info */
+		if(info->type != MOTOR_TYPE_BLDC)	/* check motor type */
+		{
+			rt_kprintf("motor %s type is incorrect! expected: %s , actual: %s !!!\n",info->name, _type[MOTOR_TYPE_BLDC],_type[info->type]);
+			return;
+		}
+		_motor_bldc_part(argc,argv,motor,info);
+	}
+	else if(!rt_strcmp(argv[2],"pid_vel") || !rt_strcmp(argv[2],"pid_pos") || !rt_strcmp(argv[2],"pid_current") || !rt_strcmp(argv[2],"start") || !rt_strcmp(argv[2],"stop"))
+	{
+		lt_motor_get_info(motor,info);		/* get motor info */
+		_motor_close_loop_part(argc,argv,motor,info);
+	}		
 	else
 	{
 		_manager_info(MANAGER_UNVALID);
@@ -461,6 +612,5 @@ static void ltmotorlib(int argc, char*argv[])
 	
 }
 MSH_CMD_EXPORT(ltmotorlib, A powerful motor control library);
-INIT_DEVICE_EXPORT(lt_manager_create);			/* create motor manager automatically */
 #endif
 #endif

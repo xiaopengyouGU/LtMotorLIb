@@ -1,8 +1,10 @@
 #include "ltmotorlib.h"
 
-static void _motor_bldc_output(lt_bldc_t, float input);
-static void _motor_bldc_output_angle(lt_bldc_t,float angle);
+static rt_err_t	_motor_bldc_output(lt_bldc_t, float input);
+static rt_err_t	_motor_bldc_output_angle(lt_bldc_t,float angle);
 static void _motor_bldc_config(lt_bldc_t bldc,struct lt_bldc_config* config);
+static rt_err_t _motor_bldc_output_torque(lt_bldc_t bldc, float input);
+static rt_err_t _motor_bldc_elec_info(lt_bldc_t bldc, struct lt_bldc_elec_info* info);
 static rt_uint8_t _bldc_check_end(lt_bldc_t bldc,float angle);	
 static void _bldc_output(lt_bldc_t bldc, float input);
 
@@ -33,19 +35,33 @@ static rt_err_t _motor_bldc_control(lt_motor_t motor, int cmd, void*arg)
 		case MOTOR_CTRL_OUTPUT:
 		{
 			float input = *(float *)arg;
-			_motor_bldc_output(bldc,input);
-			break;
+			return _motor_bldc_output(bldc,input);
 		}
 		case MOTOR_CTRL_OUTPUT_ANGLE:
 		{
 			float angle = *(float *)arg;
-			_motor_bldc_output_angle(bldc,angle);
-			break;
+			return _motor_bldc_output_angle(bldc,angle);
 		}
 		case BLDC_CTRL_CONFIG:
 		{
 			struct lt_bldc_config* config = (struct lt_bldc_config*)arg;
 			_motor_bldc_config(bldc,config);
+			break;
+		}
+		case BLDC_CTRL_OUTPUT_TORQUE:
+		{
+			float input = *(float*)arg;
+			return _motor_bldc_output_torque(bldc,input);
+		}
+		case BLDC_CTRL_GET_ELECTRIC_INFO:
+		{
+			struct lt_bldc_elec_info* info = (struct lt_bldc_elec_info* )arg;
+			return _motor_bldc_elec_info(bldc,info);
+		}		
+		case BLDC_CTRL_OUTPUT_NO_TIMER:
+		{
+			bldc->no_timer = 1;
+			break;
 		}
 		default:break;
 	}
@@ -80,15 +96,14 @@ static void _bldc_open_loop_timeout(lt_timer_t timer)
 	lt_driver_t driver = bldc->parent.driver;
 	lt_sensor_t sensor = bldc->parent.sensor;
 	lt_foc_t foc = bldc->foc;
-	rt_uint8_t res;
+	rt_uint8_t res = 0;
 	float angle;
-	float Uq = bldc->target_vel/bldc->KV/2;						/* get Uq, half of peak-to-peak value */
+	float Uq = bldc->target_vel/bldc->KV;						/* get Uq */
 	float duty_A, duty_B, duty_C;
 	
 	/* disable output at first */
 	lt_driver_disable(driver);
 	angle = lt_sensor_get_angle(sensor);						/* get mechanical angle */
-	
 	if(bldc->flag & FLAG_BLDC_OPEN_POS)							/* open loop output angle */
 	{
 		res = _bldc_check_end(bldc,angle);
@@ -98,28 +113,29 @@ static void _bldc_open_loop_timeout(lt_timer_t timer)
 		lt_timer_disable(timer,TIMER_TYPE_HW);
 		if(bldc->parent.callback)
 		{
-			bldc->parent.callback(RT_NULL);						/* call callback function */
+			bldc->parent.callback(bldc->parent.call_param);	   /* call callback function */
 		}
 		bldc->parent.status = MOTOR_STATUS_STOP;
 		return;
 	}
 	
-	lt_foc_process(foc,0,Uq,angle*bldc->poles);					/* transform to electric angle */
+	lt_foc_process(foc,0,Uq,angle*bldc->poles);			    /* transform to electric angle */
 	lt_foc_map_duty(foc,&duty_A,&duty_B,&duty_C);
 	lt_driver_3pwm_output(driver,BLDC_OUTPUT_PERIOD,duty_A,duty_B,duty_C);		/* frequency: 10kHz <==> 100us */
 }
 
-static void _motor_bldc_output(lt_bldc_t bldc, float input)
+static rt_err_t _motor_bldc_output(lt_bldc_t bldc, float input)
 {
-	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return;				/* not configured !!! */
+	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return RT_ERROR;				/* not configured !!! */
 	/* clear other flags at first */
 	bldc->flag = FLAG_BLDC_CONFIG;
 	_bldc_output(bldc,input);
+	return RT_EOK;
 }
 
-static void _motor_bldc_output_angle(lt_bldc_t bldc,float angle)
+static rt_err_t _motor_bldc_output_angle(lt_bldc_t bldc,float angle)
 {
-	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return;				/* not configured !!! */
+	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return RT_ERROR;				/* not configured !!! */
 	/* set flag at first */
 	bldc->flag |= FLAG_BLDC_OPEN_POS;
 	float curr_pos = lt_sensor_get_angle(bldc->parent.sensor);
@@ -135,15 +151,16 @@ static void _motor_bldc_output_angle(lt_bldc_t bldc,float angle)
 	}
 	else if(curr_pos < angle)
 	{
-		bldc->flag = CLEAR_BIT(bldc->flag,FLAG_BLDC_OPEN_POS_BIAS);	/* initial angle < target */
+		bldc->flag = CLEAR_BITS(bldc->flag,FLAG_BLDC_OPEN_POS_BIAS);	/* initial angle < target */
 		dir = 1;													/* forward rotation */
 	}
 	else
 	{
-		return;
+		return RT_EOK;
 	}
 	
 	_bldc_output(bldc,dir*BLDC_OPEN_SPEED);
+	return RT_EOK;
 }
 
 static void _motor_bldc_config(lt_bldc_t bldc,struct lt_bldc_config* config)
@@ -155,7 +172,6 @@ static void _motor_bldc_config(lt_bldc_t bldc,struct lt_bldc_config* config)
 	bldc->poles = config->poles;
 	bldc->resistance = config->resistance;
 	bldc->KV = config->KV;
-	bldc->pid_current = config->pid_current;
 	bldc->current = config->current;
 	bldc->flag = FLAG_BLDC_CONFIG;				/* set config! */
 	
@@ -163,17 +179,39 @@ static void _motor_bldc_config(lt_bldc_t bldc,struct lt_bldc_config* config)
 	lt_foc_set_type(bldc->foc,config->foc_type);
 }
 
+static rt_err_t _motor_bldc_elec_info(lt_bldc_t bldc, struct lt_bldc_elec_info* info)
+{
+	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return RT_ERROR;				/* not configured !!! */
+	lt_current_t current = bldc->current;
+	lt_sensor_t sensor = bldc->parent.sensor;
+	float angle_el = lt_sensor_get_angle(sensor) * bldc->poles;
+	static struct lt_current_info current_info;
+	
+	lt_current_get_info(current,angle_el,&current_info);
+	info->angle_el = _normalize_angle(angle_el)*180.0f/PI;
+	info->Ia = current_info.Ia;
+	info->Ib = current_info.Ib;
+	info->Ic = current_info.Ic;
+	info->Id = current_info.Id;
+	info->Iq = current_info.Iq;
+
+	return RT_EOK;
+	
+}
+
+
 void _bldc_torque_timeout(lt_timer_t timer)
 {
 	lt_bldc_t bldc = (lt_bldc_t)timer->user_data;
 	lt_driver_t driver = bldc->parent.driver;
-	lt_pid_t pid = bldc->pid_current;
+	lt_pid_t pid = bldc->parent.pid_current;
 	lt_foc_t foc = bldc->foc;
 	float angle_el = lt_sensor_get_angle(bldc->parent.sensor) * bldc->poles;
-	float Iq  = lt_current_get_iq(bldc->current,angle_el,pid->dt*1000000);	/* unit: s --> us */
+	float Id,Iq;
 	float control_u;
 	float duty_A, duty_B, duty_C;
 	
+	lt_current_get_dq(bldc->current,angle_el,pid->dt*1000000,&Id,&Iq);	/* unit: s --> us */
 	control_u = PID_CURR_CONST * lt_pid_control(pid,Iq);
 	lt_foc_process(foc,0,control_u,angle_el);
 	lt_foc_map_duty(foc,&duty_A,&duty_B,&duty_C);
@@ -183,7 +221,7 @@ void _bldc_torque_timeout(lt_timer_t timer)
 static rt_err_t _motor_bldc_output_torque(lt_bldc_t bldc, float input)
 {
 	if(!(bldc->flag & FLAG_BLDC_CONFIG)) return RT_ERROR;				/* not configured !!! */
-	if(bldc->current == RT_NULL || bldc->pid_current == RT_NULL) return RT_ERROR;
+	if(bldc->current == RT_NULL || bldc->parent.pid_current == RT_NULL) return RT_ERROR;
 	
 	lt_timer_t timer = bldc->parent.timer;
 	float Iq = input*bldc->KV/8.27;										/* get desired Iq, T[N.m] = 8.27*Iq[A]/KV */
@@ -192,13 +230,13 @@ static rt_err_t _motor_bldc_output_torque(lt_bldc_t bldc, float input)
 	/* disable output at first */
 	lt_driver_disable(bldc->parent.driver);
 	lt_timer_disable(timer,TIMER_TYPE_HW);
-	lt_pid_set_target(bldc->pid_current,Iq);							/* set target Iq */
-	lt_timer_period_call(timer,BLDC_PERIOD,_bldc_torque_timeout,bldc,TIMER_TYPE_HW);
+	lt_pid_set_target(bldc->parent.pid_current,Iq);							/* set target Iq */
+	return lt_timer_period_call(timer,BLDC_PERIOD,_bldc_torque_timeout,bldc,TIMER_TYPE_HW);
 }
 
 static rt_uint8_t _bldc_check_end(lt_bldc_t bldc,float angle)
 {
-	rt_uint8_t res;
+	rt_uint8_t res = 0;
 	if(bldc->flag & FLAG_BLDC_OPEN_POS_BIAS)				/* 1: initial angle > target */
 	{
 		if(angle <= bldc->target_pos)
@@ -221,26 +259,41 @@ static rt_uint8_t _bldc_check_end(lt_bldc_t bldc,float angle)
 
 static void _bldc_output(lt_bldc_t bldc, float input)
 {
-	float max_speed = bldc->max_volt*bldc->KV;	
-	float duty_A, duty_B, duty_C;
+	float max_speed = bldc->max_volt*bldc->KV/2;	
 	lt_driver_t driver = bldc->parent.driver;
 	lt_timer_t timer = bldc->parent.timer;
+	lt_sensor_t sensor = bldc->parent.sensor;
 	lt_foc_t foc = bldc->foc;
-	/* check input boundary with dead region */
+	float duty_A,duty_B,duty_C;
+	float angle = lt_sensor_get_angle(sensor);
+	/* check input */
 	input = _constrains(input,max_speed,-max_speed);
+	if(_absf(input) < 5) input = 0;
 	/* disable output at first */
 	lt_driver_disable(driver);
-	lt_timer_disable(timer,TIMER_TYPE_HW);
 	
 	if(input == 0) 
 	{
-		lt_driver_disable(driver);	
 		bldc->parent.status = MOTOR_STATUS_STOP;	/* change motor status */
+		if(!bldc->no_timer) lt_timer_disable(timer,TIMER_TYPE_HW);
+		return;
 	}
 	else
 	{
-		bldc->target_vel = input;
 		bldc->parent.status = MOTOR_STATUS_RUN;
 	}
-	lt_timer_period_call(timer,BLDC_PERIOD,_bldc_open_loop_timeout,bldc,TIMER_TYPE_HW);	/* start timer */
+
+	if(bldc->no_timer)					/* user is responsible for controlling bldc open output */
+	{
+		input /= bldc->KV;
+		lt_foc_process(foc,0,input,angle*bldc->poles);			    				/* transform to electric angle */
+		lt_foc_map_duty(foc,&duty_A,&duty_B,&duty_C);
+		lt_driver_3pwm_output(driver,BLDC_OUTPUT_PERIOD,duty_A,duty_B,duty_C);		/* frequency: 10kHz <==> 100us */
+	}
+	else								/* use timer to control bldc open output */
+	{	
+		lt_timer_disable(timer,TIMER_TYPE_HW);
+		bldc->target_vel = input;
+		lt_timer_period_call(timer,BLDC_PERIOD,_bldc_open_loop_timeout,bldc,TIMER_TYPE_HW);	/* start timer */
+	}
 }
