@@ -1,8 +1,15 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #ifndef __LT_MOTOR_LIB_H__
 #define __LT_MOTOR_LIB_H__
 #include <rtthread.h>
 #include <rtdevice.h>
 #include "lt_def.h"
+#include "protocol.h"
 rt_align(RT_ALIGN_SIZE)
 /* declare special motor operators */
 extern char* _status[4];
@@ -495,12 +502,15 @@ struct lt_stepper_config
 #define BLDC_CTRL_CONFIG					(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x20)
 #define BLDC_CTRL_OUTPUT_TORQUE				(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x21)	
 #define BLDC_CTRL_GET_ELECTRIC_INFO			(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x22)
-#define BLDC_CTRL_OUTPUT_NO_TIMER			(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x23)
+#define BLDC_CTRL_GET_MECHANICAL_INFO		(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x24)
+#define BLDC_CTRL_GET_MOTOR_INFO			(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x25)
+#define BLDC_CTRL_OUTPUT_NO_TIMER			(MOTOR_CTRL_OUTPUT_ANGLE_PID + 0x26)
 /* bldc flag */
 #define FLAG_BLDC_CONFIG					0x01
 #define FLAG_BLDC_OPEN_POS					0x02	/* used for open loop output */					
-#define FLAG_BLDC_OPEN_POS_BIAS				0x04	/* bit4: 1: curr angle > target, 0: curr angle < target */
+#define FLAG_BLDC_OPEN_POS_BIAS				0x04	/* bit2: 1: curr angle > target, 0: curr angle < target */
 #define FLAG_BLDC_TORQUE					0x08	/* constant torque output */
+#define FLAG_BLDC_GET_INFO					0x10	/* already read current pos, no need to read again */
 
 struct lt_motor_bldc_object
 {
@@ -533,7 +543,7 @@ struct lt_bldc_config
 	lt_current_t current;		/* current sense */
 };
 
-struct lt_bldc_elec_info
+struct lt_bldc_info
 {
 	float angle_el;
 	float Ia;
@@ -541,6 +551,9 @@ struct lt_bldc_elec_info
 	float Ic;
 	float Iq;
 	float Id;
+	float pos;
+	float vel;
+	float dt;
 };
 
 /*****************************************************************************************************/

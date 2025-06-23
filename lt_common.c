@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #include "ltmotorlib.h"
 #include "math.h"
 
@@ -244,7 +250,7 @@ float _normalize_angle(float angle_el)
 	{
 		angle_el -= n * 2 *PI;
 	}
-	angle_el = 2*PI - angle_el;
+	angle_el = 2*PI - angle_el;			/* CW --> CCW, electrical angle is in CCW(+), but mechanical angle is in CW(+) */
 	return angle_el;
 }
 

@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #include "ltmotorlib.h"
 
 extern struct lt_driver_ops _driver_dc_ops;
@@ -84,7 +90,7 @@ rt_err_t lt_driver_set_output(lt_driver_t driver,rt_uint32_t period,float duty_c
 	period = period*1000;		/* unit: us-> ns */
 	rt_uint32_t pulse = (rt_uint32_t)(period*duty_cycle);
 	
-	rt_pwm_disable(pwm,channel);							/* disable pwm first */
+	//rt_pwm_disable(pwm,channel);							/* disable pwm first */
 	rt_pwm_set(pwm,channel,period,pulse);					/* set pwm output */
 	
 	return RT_EOK;
@@ -103,7 +109,7 @@ rt_err_t lt_driver_3pwm_output(lt_driver_t driver,rt_uint32_t period,float dutyA
 	dutyC = _constrains(dutyC,0,1);
 	
 	period = period*1000;		/* unit: us-> ns */
-	driver->ops->disable(driver);			/* disable output first */			
+	//driver->ops->disable(driver);			/* disable output first */			
 	/* set pwm output */
 	rt_pwm_set(driver->pwm_A,driver->pwm_channel_A,period,(rt_uint32_t)(dutyA*period));
 	rt_pwm_set(driver->pwm_B,driver->pwm_channel_B,period,(rt_uint32_t)(dutyB*period));

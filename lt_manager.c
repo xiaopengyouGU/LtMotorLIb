@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #include "ltmotorlib.h"
 #include "stdlib.h"
 lt_manager_t _manager;
@@ -214,13 +220,14 @@ static void _manager_info(int type)
 		rt_kprintf("LtMotorLib provides pid adjust interface for user \n");
 		rt_kprintf("This part is coorporated with communicator for oscilloscope \n");
 		rt_kprintf("Note: dac output voltage (dV), dV < 1.65V : (-); dV > 1.65V : (+) \n");
+		rt_kprintf("1.65V <==> 2048 output! \n");
 		rt_kprintf("supported pid type: pid_vel/pid_pos/pid_current \n");
 		rt_kprintf("current pid is only for BLDC motor\n");
 		rt_kprintf("ltmotorlib motor pid_type set Kp Ki Kd \n");
 		rt_kprintf("ltmotorlib motor pid_type set_target value \n");
 		rt_kprintf("ltmotorlib motor pid_type set_dt time(ms) \n");
 		rt_kprintf("ltmotorlib motor pid_type reset \n ");
-		rt_kprintf("ltmotorlib mtoor pid_start \n");
+		rt_kprintf("ltmotorlib motor pid_start \n");
 		rt_kprintf("ltmotorlib motor pid_stop \n ");
 	}
 }
@@ -452,6 +459,7 @@ static void _motor_close_loop_part(int argc,char *argv[],lt_motor_t motor, struc
 			{
 				float dt = atof(argv[4]);
 				lt_pid_set_dt(pid,dt);
+				lt_timer_set(timer,dt*1000,TIMER_MODE_PERIODIC,TEST_PID_TIMER_TYPE);	/* ms --> us */
 				flag = 1;
 			}
 		}
@@ -459,19 +467,19 @@ static void _motor_close_loop_part(int argc,char *argv[],lt_motor_t motor, struc
 		{
 			lt_pid_reset(pid);
 			lt_motor_disable(motor);
-			lt_timer_disable(timer,TIMER_TYPE_HW);
+			lt_timer_disable(timer,TEST_PID_TIMER_TYPE);
 			flag = 1;
 		}
 	}
-	else if(!rt_strcmp(argv[2],"stop"))
+	else if(!rt_strcmp(argv[2],"pid_stop"))
 	{
 		lt_motor_disable(motor);
-		lt_timer_disable(timer,TIMER_TYPE_HW);
+		lt_timer_disable(timer,TEST_PID_TIMER_TYPE);
 		flag = 1;
 	}
-	else if(!rt_strcmp(argv[2],"start"))
+	else if(!rt_strcmp(argv[2],"pid_start"))
 	{
-		lt_timer_enable(timer,TIMER_TYPE_HW);
+		lt_timer_enable(timer,TEST_PID_TIMER_TYPE);
 		flag = 1;
 	}
 	
@@ -600,7 +608,7 @@ static void ltmotorlib(int argc, char*argv[])
 		}
 		_motor_bldc_part(argc,argv,motor,info);
 	}
-	else if(!rt_strcmp(argv[2],"pid_vel") || !rt_strcmp(argv[2],"pid_pos") || !rt_strcmp(argv[2],"pid_current") || !rt_strcmp(argv[2],"start") || !rt_strcmp(argv[2],"stop"))
+	else if(!rt_strcmp(argv[2],"pid_vel") || !rt_strcmp(argv[2],"pid_pos") || !rt_strcmp(argv[2],"pid_current") || !rt_strcmp(argv[2],"pid_start") || !rt_strcmp(argv[2],"pid_stop"))
 	{
 		lt_motor_get_info(motor,info);		/* get motor info */
 		_motor_close_loop_part(argc,argv,motor,info);

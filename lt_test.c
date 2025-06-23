@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #include "ltmotorlib.h"
 #include "protocol.h"
 #include "stdlib.h"
@@ -211,7 +217,6 @@ rt_err_t test_bldc_x_config(void)
 	/* bldc part config */
 	config.current = curr_bldc_x;
 	config.foc_type = FOC_TYPE_DEFAULT;
-	//config.foc_type = FOC_TYPE_6_TRAPZOID;
 	config.inductance = 0.00425;											/* unit: H */
 	config.KV = 100;						
 	config.resistance = 8;												    /* unit: Ohm */
@@ -276,8 +281,7 @@ rt_err_t test_bldc_y_config(void)
 	
 	/* bldc part config */
 	config.current = curr_bldc_y;
-	//config.foc_type = FOC_TYPE_6_TRAPZOID;
-	config.foc_type = FOC_TYPE_DEFAULT;
+	config.foc_type = FOC_TYPE_6_TRAPZOID;
 	config.inductance = 0.00425;										    /* unit: H */
 	config.KV = 100;						
 	config.resistance = 8;												 	/* unit: Ohm */
@@ -318,7 +322,7 @@ void test_velocity_loop(lt_timer_t timer)
 	static rt_uint32_t count = 0;
 	if (count % TEST_PID_COMMUT_TIMES == 0)
 	{
-		int t_vel = vel, t_control_u = control_u;							
+		int t_vel = 10*vel, t_control_u = 10*control_u;							
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_vel,1);
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_control_u,1);
 	}
@@ -349,7 +353,7 @@ void test_current_loop(lt_timer_t timer)
 	/* eg: KP = 8.0 */
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
 	lt_pid_t pid = motor->pid_current;
-	static struct lt_bldc_elec_info info;
+	static struct lt_bldc_info info;
 	lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);
 	float Iq = info.Iq;		/* get q axis current, unit: A */
 	float Ia = info.Ia, Ib = info.Ib;
@@ -364,40 +368,15 @@ void test_current_loop(lt_timer_t timer)
 	{
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_Iq,1);
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_control_u,1);
+#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_Ia,1);
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH4,&t_Ib,1);
+#endif
 	}
 }
 
 void test_position_velocity_loop(lt_timer_t timer)
 {
-//	lt_motor_t motor = (lt_motor_t)timer->user_data;
-//	lt_pid_t pid_vel = motor->pid_vel;
-//	lt_pid_t pid_pos = motor->pid_pos;
-//	/* we adjust vel_pid first */
-//	/* vel_pid: DC motor: Kp = 5.6, Ki = 2.0, Kd = 0.01 */
-//	/* pos_pid: DC motor: Kp = 10, Ki = 0, Kd = 0 */
-//	static rt_uint32_t count = 0;
-//	/* process position loop first, sample time 3T */
-//	if(count % 3 == 0)
-//	{
-//		float position = lt_motor_get_position(motor)*180.0f/PI;	/* unit: degree */
-//		float desired_vel = PID_POS_CONST * lt_pid_control(pid_pos,position);
-//		//float desired_vel = 0.0225 * lt_pid_control(pid_pos,position); /* for stepper pos_vel pid */
-//		lt_pid_set_target(pid_vel,desired_vel);
-//		int t_position = position;
-//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_position,1);
-//	}
-//	/* velocity loop follow, sample time T */
-//	float vel = lt_motor_get_velocity(motor,pid_vel->dt*1000)*9.55;	/* get rpm, s --> ms */
-//	float control_u = PID_VEL_CONST * lt_pid_control(pid_vel,vel);
-//	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
-//	int t_speed = vel, t_control_u = control_u;
-//	
-//	lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_speed,1);
-//	lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
-//	count++;
-	
 	lt_motor_t motor = (lt_motor_t)timer->user_data;
 	lt_pid_t pid_vel = motor->pid_vel;
 	lt_pid_t pid_pos = motor->pid_pos;
@@ -427,127 +406,138 @@ void test_position_velocity_loop(lt_timer_t timer)
 	if(count % TEST_PID_COMMUT_TIMES == 0)
 	{
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_speed,1);
+#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
 		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
+#endif
 	}
 	count++;
 }
 
-void test_velocity_current_loop(lt_timer_t timer)
-{
-	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid_vel = motor->pid_vel;
-	lt_pid_t pid_current = motor->pid_current;
-	/* we adjust current pid first */
-	static rt_uint32_t count = 0;
-	static struct lt_bldc_elec_info info;
-	/* process velocity loop first, sample time 3T */
-	if(count % 3 == 0)
-	{
-		float vel = lt_motor_get_velocity(motor,pid_vel->dt*1000)*9.55;	/* unit: rpm */
-		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_vel,vel);
-		//float desired_vel = 0.0225 * lt_pid_control(pid_pos,position); /* for stepper pos_vel pid */
-		lt_pid_set_target(pid_current,desired_curr);
-		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
-		{
-			int t_vel = vel;
-			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_vel,1);
-		}
-	}
-	/* current loop follow, sample time T */
-	float Iq = lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);	/* unit: degree */
-	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
-	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
-	int t_current = Iq, t_control_u = control_u;
-	
-	if(count % TEST_PID_COMMUT_TIMES == 0)
-	{
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_current,1);
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
-	}
-	count++;
-}
+//void test_velocity_current_loop(lt_timer_t timer)
+//{
+//	lt_motor_t motor = (lt_motor_t)timer->user_data;
+//	lt_pid_t pid_vel = motor->pid_vel;
+//	lt_pid_t pid_current = motor->pid_current;
+//	/* we adjust current pid first */
+//	static rt_uint32_t count = 0;
+//	static struct lt_bldc_info info;
+//	/* process velocity loop first, sample time 3T */
+//	if(count % 3 == 0)
+//	{
+//		float vel = lt_motor_get_velocity(motor,pid_vel->dt*1000)*9.55;	/* unit: rpm */
+//		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_vel,vel);
+//		//float desired_vel = 0.0225 * lt_pid_control(pid_pos,position); /* for stepper pos_vel pid */
+//		lt_pid_set_target(pid_current,desired_curr);
+//		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
+//		{
+//			int t_vel = vel;
+//			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_vel,1);
+//		}
+//	}
+//	/* current loop follow, sample time T */
+//	lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);	/* unit: degree */
+//	float Iq = info.Iq;
+//	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
+//	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
+//	int t_current = Iq, t_control_u = control_u;
+//	
+//	if(count % TEST_PID_COMMUT_TIMES == 0)
+//	{
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_current,1);
+//#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
+//#endif
+//	}
+//	count++;
+//}
 
-void test_position_current_loop(lt_timer_t timer)
-{
-	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid_pos = motor->pid_pos;
-	lt_pid_t pid_current = motor->pid_current;
-	/* we adjust current pid first */
-	static rt_uint32_t count = 0;
-	static struct lt_bldc_elec_info info;
-	/* process velocity loop first, sample time 3T */
-	if(count % 3 == 0)
-	{
-		float pos = lt_motor_get_position(motor)*180.0f/PI;	/* unit: rpm */
-		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_pos,pos);
-		lt_pid_set_target(pid_current,desired_curr);
-		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
-		{
-			int t_pos = pos;
-			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_pos,1);
-		}
-	}
-	/* current loop follow, sample time T */
-	float Iq = lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);	/* unit: degree */
-	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
-	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
-	int t_current = Iq, t_control_u = control_u;
-	
-	if(count % TEST_PID_COMMUT_TIMES == 0)
-	{
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_current,1);
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
-	}
-	count++;
-}
+//void test_position_current_loop(lt_timer_t timer)
+//{
+//	lt_motor_t motor = (lt_motor_t)timer->user_data;
+//	lt_pid_t pid_pos = motor->pid_pos;
+//	lt_pid_t pid_current = motor->pid_current;
+//	/* we adjust current pid first */
+//	static rt_uint32_t count = 0;
+//	static struct lt_bldc_info info;
+//	/* process velocity loop first, sample time 3T */
+//	if(count % 3 == 0)
+//	{
+//		float pos = lt_motor_get_position(motor)*180.0f/PI;	/* unit: rpm */
+//		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_pos,pos);
+//		lt_pid_set_target(pid_current,desired_curr);
+//		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
+//		{
+//			int t_pos = pos;
+//			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_pos,1);
+//		}
+//	}
+//	/* current loop follow, sample time T */
+//	lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);
+//	float Iq = info.Iq;											/* unit: A */
+//	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
+//	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
+//	int t_current = Iq, t_control_u = control_u;
+//	
+//	if(count % TEST_PID_COMMUT_TIMES == 0)
+//	{
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_current,1);
+//#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_control_u,1);
+//#endif
+//	}
+//	count++;
+//}
 
-void test_position_velocity_current_loop(lt_timer_t timer)
-{
-	lt_motor_t motor = (lt_motor_t)timer->user_data;
-	lt_pid_t pid_pos = motor->pid_pos;
-	lt_pid_t pid_vel = motor->pid_vel;
-	lt_pid_t pid_current = motor->pid_current;
-	/* we adjust current pid first */
-	static rt_uint32_t count = 0;
-	static struct lt_bldc_elec_info info;
-	/* process position loop first, sample time 9T */
-	if(count % 9 == 0)
-	{
-		float pos = lt_motor_get_position(motor)*180.0f/PI;	/* unit: rpm */
-		float desired_vel = PID_POS_CONST * lt_pid_control(pid_pos,pos);
-		lt_pid_set_target(pid_pos,desired_vel);
-		if(count % (9*TEST_PID_COMMUT_TIMES) == 0)
-		{
-			int t_pos = pos;
-			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_pos,1);
-		}
-	}
-	/* velocity loop follow, sample time 3T */
-	if(count % 3 == 0)
-	{
-		float vel = lt_motor_get_velocity(motor,pid_vel->dt*1000)*9.55;	/* unit: rpm */
-		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_vel,vel);
-		//float desired_vel = 0.0225 * lt_pid_control(pid_pos,position); /* for stepper pos_vel pid */
-		lt_pid_set_target(pid_current,desired_curr);
-		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
-		{
-			int t_vel = vel;
-			lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_vel,1);
-		}
-	}
-	/* current loop follow, sample time T*/
-	float Iq = lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);	/* unit: degree */
-	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
-	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
-	int t_current = Iq, t_control_u = control_u;
-	
-	if(count % TEST_PID_COMMUT_TIMES == 0)
-	{
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_current,1);
-		lt_communicator_send(SEND_FACT_CMD,CURVES_CH4,&t_control_u,1);
-	}
-	count++;
-}
+//void test_position_velocity_current_loop(lt_timer_t timer)
+//{
+//	lt_motor_t motor = (lt_motor_t)timer->user_data;
+//	lt_pid_t pid_pos = motor->pid_pos;
+//	lt_pid_t pid_vel = motor->pid_vel;
+//	lt_pid_t pid_current = motor->pid_current;
+//	/* we adjust current pid first */
+//	static rt_uint32_t count = 0;
+//	static struct lt_bldc_info info;
+//	/* process position loop first, sample time 9T */
+//	if(count % 9 == 0)
+//	{
+//		float pos = lt_motor_get_position(motor)*180.0f/PI;	/* unit: rpm */
+//		float desired_vel = PID_POS_CONST * lt_pid_control(pid_pos,pos);
+//		lt_pid_set_target(pid_pos,desired_vel);
+//		if(count % (9*TEST_PID_COMMUT_TIMES) == 0)
+//		{
+//			int t_pos = pos;
+//			lt_communicator_send(SEND_FACT_CMD,CURVES_CH1,&t_pos,1);
+//		}
+//	}
+//	/* velocity loop follow, sample time 3T */
+//	if(count % 3 == 0)
+//	{
+//		float vel = lt_motor_get_velocity(motor,pid_vel->dt*1000)*9.55;	/* unit: rpm */
+//		float desired_curr = PID_VEL_CONST * lt_pid_control(pid_vel,vel);
+//		//float desired_vel = 0.0225 * lt_pid_control(pid_pos,position); /* for stepper pos_vel pid */
+//		lt_pid_set_target(pid_current,desired_curr);
+//		if(count % (3*TEST_PID_COMMUT_TIMES) == 0)
+//		{
+//			int t_vel = vel;
+//			lt_communicator_send(SEND_FACT_CMD,CURVES_CH2,&t_vel,1);
+//		}
+//	}
+//	/* current loop follow, sample time T*/
+//	lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);
+//	float Iq = info.Iq;/* unit: A */
+//	float control_u = PID_CURR_CONST * lt_pid_control(pid_current,Iq);
+//	lt_motor_control(motor,MOTOR_CTRL_OUTPUT,&control_u);		/* output! */
+//	int t_current = Iq, t_control_u = control_u;
+
+//#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE	
+//	if(count % TEST_PID_COMMUT_TIMES == 0)
+//	{
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH3,&t_current,1);
+//		lt_communicator_send(SEND_FACT_CMD,CURVES_CH4,&t_control_u,1);
+//	}
+//#endif
+//	count++;
+//}
 /*************************************************************/
 /* communicate with upper computer */
 static void process_thread_entry(void* parameter)
@@ -615,10 +605,6 @@ static void process_thread_entry(void* parameter)
 
 }
 
-
-
-//#endif
-
 /* motor close loop test frame */
 rt_err_t test_close_loop_pid(char*name)
 {
@@ -649,7 +635,7 @@ rt_err_t test_close_loop_pid(char*name)
 	lt_timer_set(timer,pid_pos->dt*1000000,TIMER_MODE_PERIODIC,TEST_PID_TIMER_TYPE);	/* s --> us */	
 #endif
 #ifdef TEST_PID_CURR
-	lt_timer_set(timer,pid_current->dt*1000000,TIMER_MODE_PERIODIC,TEST_PID_TIMER_TYPE);	/* s --> us */	
+	lt_timer_set(timer,pid_current->dt*1000000,TIMER_MODE_PERIODIC,TEST_PID_TIMER_TYPE);/* s --> us */	
 #endif
 	
 #ifdef TEST_PID_POS_VEL	
@@ -669,6 +655,8 @@ rt_err_t test_close_loop_pid(char*name)
 	lt_pid_set_dt(pid_vel,pid_current->dt*3000);						/* s --> ms */
 	lt_pid_set_dt(pid_pos,pid_vel->dt*3000);							/* s --> ms */
 #endif	
+
+#ifndef COMMUNICATOR_TYPE_OSCILLOSCOPE
 /* create process thread */
 	_process = rt_thread_create("_process",		/* create a process thread */
 								process_thread_entry,
@@ -681,153 +669,11 @@ rt_err_t test_close_loop_pid(char*name)
 		rt_kprintf("create process thread failed! \n");
 	}
 	rt_thread_startup(_process);
-
-#ifdef LT_USING_MOTOR_MSH_TEST
-	lt_timer_enable(timer,TEST_PID_TIMER_TYPE);
 #endif
 	
 	return RT_EOK;
 }
 
-
-///* stepper for interpolation */
-//static lt_motor_t x_stepper;
-//static lt_motor_t y_stepper;
-//static lt_driver_t x_driver;
-//static lt_driver_t y_driver; 
-//static lt_sensor_t x_encoder;
-////static lt_sensor_t y_encoder;
-//static rt_sem_t sem_test;				/* semaphore for test */
-//static rt_thread_t stepper_thread;		/* stepper thread */
-///* when finish output, this function would be called */
-//rt_err_t done_callback(void *parameter)
-//{
-//	return rt_sem_release(sem_test);
-//}
-
-//static void stepper_thread_entry(void *parameter)
-//{
-//	rt_uint8_t i;
-//	float output = 360, res;
-//	for (i = 0; i < 5; i++)			/* 5 forward rotations */
-//	{
-//		lt_motor_control(x_stepper,STEPPER_CTRL_OUTPUT_ANGLE,&output);
-//		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
-//		rt_thread_mdelay(500);									/* delay */
-//	}
-//	output = -360;
-//	for (i = 0; i < 5; i++)			/* 5 reversal rotations */
-//	{
-//		lt_motor_control(x_stepper,STEPPER_CTRL_OUTPUT_ANGLE,&output);
-//		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
-//		rt_thread_mdelay(500);									/* delay */
-//	}
-//	/* we only set x_stepper position sensor */
-//	test_motor_get_position(x_stepper);
-//	test_motor_get_velocity(x_stepper);
-//	
-//	/* line interpolation path: /\ -->  ---
-//								\/     |   |
-//										---	
-//	*/
-//	rt_int32_t line_path[8][2] = {{500,800},{500,-800},{-500,-800},{-500,800},
-//								  {0,1000},{1000,0},{0,-1000},{-1000,0}};
-//	rt_int32_t circular_path[9][2] = {{707,0},{500,500},{0,707},{-500,500},{-707,0},{-500,-500},{0,-707},{500,-500},{0,707}};
-//	/* draw a circle with radius = 707 steps */
-//	/* line interp test */							  
-//	for(i = 0; i < 8; i++)
-//	{
-//		test_stepper_line_interp(x_stepper,y_stepper,line_path[i][0],line_path[i][1]);
-//		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
-//		rt_thread_mdelay(1000);									
-//	}
-//	/* circular interp test */
-//	/* in this case, the circular should lie in one quadrant and interp direction should be reasonable 
-//	*  eg: start:(50, 50), end:(71,0), direction should be CW since intep circular lies in 1th quadrant
-//	*/
-//	for(i = 0; i < 8; i++)
-//	{
-//		test_stepper_circular_interp(x_stepper,y_stepper,circular_path[i][0],circular_path[i][1],circular_path[i+1][0],circular_path[i+1][1],DIR_CCW);
-//		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
-//		rt_thread_mdelay(1000);									
-//	}
-//	/* clock-wise */
-//	for(i = 8; i > 1; i++)
-//	{
-//		test_stepper_circular_interp(x_stepper,y_stepper,circular_path[i][0],circular_path[i][1],circular_path[i+1][0],circular_path[i+1][1],DIR_CW);
-//		rt_sem_take(sem_test,RT_WAITING_FOREVER);				/* waiting output finish */
-//		rt_thread_mdelay(1000);									
-//	}
-//	
-//	/* trapzoid accelerate */
-//	test_stepper_trapzoid(x_stepper,1000,0.002,0.006,0.4);
-//	rt_sem_take(sem_test,RT_WAITING_FOREVER);	/* wait accel finish */
-//	/* run 1000 step! reversal speed */
-//	test_stepper_trapzoid(x_stepper,-1000,0.002,0.006,0.4);
-//	rt_sem_take(sem_test,RT_WAITING_FOREVER);	/* wait accel finish */
-//	
-//	/* s curve acclerate */
-//	test_stepper_s_curve(x_stepper,1000,300,20,2);	/* for stepper, 300Hz is relatively big */
-//	/* the smaller flexible, the closer to const accel */
-//	rt_sem_take(sem_test,RT_WAITING_FOREVER);		/* wait accel finish */
-//	rt_thread_mdelay(2000);							/* delay 2000ms, then rotates reversally */
-//	test_stepper_s_curve(x_stepper,-1000,300,20,2);/* for stepper, 300Hz is relatively big */
-//}
-
-//static void stepper_test(void)
-//{
-//	struct lt_stepper_config config;
-//	rt_base_t x_pin = rt_pin_get("PF.8"), y_pin = rt_pin_get("PE.11");
-//	rt_base_t x_enable = rt_pin_get("PF.7"), y_enable = rt_pin_get("PF.13");
-// 	lt_driver_t x_driver, y_driver;
-//	lt_timer_t x_timer, y_timer;
-//	/* create steppers and drivers */
-//	x_stepper = lt_motor_create("x_stepper",1,MOTOR_TYPE_STEPPER);
-//	y_stepper = lt_motor_create("y_stepper",1,MOTOR_TYPE_STEPPER);
-//	x_driver = lt_driver_create(DRIVER_TYPE_STEPPER);
-//	y_driver = lt_driver_create(DRIVER_TYPE_STEPPER);
-//	x_encoder = lt_sensor_create(SENSOR_NUM_ENCODER_1,4*600,SENSOR_TYPE_ENCODER);
-//	x_timer = lt_timer_create("x_timer",TIMER_NUM_1,0);
-//	y_timer = lt_timer_create("y_timer",TIMER_NUM_2,0);
-//	if(x_stepper == RT_NULL)  return;
-//	if(y_stepper == RT_NULL)  return;
-//	if(x_driver == RT_NULL)  return;
-//	if(y_driver == RT_NULL)  return;
-//	if(x_encoder == RT_NULL) return;
-//	if(x_timer == RT_NULL)  return;
-//	if(y_timer == RT_NULL) return;
-//	/* set stepper drivers! */
-//	lt_driver_set_pins(x_driver,x_pin,0,x_enable);
-//	lt_driver_set_pins(y_driver,y_pin,0,y_enable);
-//	lt_driver_set_pwm(x_driver,PWM_NUM,OUTPUT_CHANNEL-1,0);
-//	lt_driver_set_pwm(y_driver,PWM_NUM,OUTPUT_CHANNEL,0);
-//	lt_motor_set_driver(x_stepper,x_driver);
-//	lt_motor_set_driver(y_stepper,y_driver);
-//	lt_motor_set_callback(x_stepper,done_callback);
-//	lt_motor_set_timer(x_stepper,x_timer);
-//	lt_motor_set_timer(y_stepper,y_timer);
-//	//lt_motor_set_callback(y_stepper,done_callback);
-//	/* set stepper position sensor */
-//	//lt_sensor_set_pins(x_encoder,0,0,0);
-//	lt_motor_set_sensor(x_stepper,x_encoder);
-//	/* config stepper params */
-//	config.period = STEPPER_PERIOD;
-//	config.stepper_angle = STEPPER_ANGLE;
-//	config.subdivide = STEPPER_SUBDIVIDE;
-//	
-//	lt_motor_control(x_stepper,STEPPER_CTRL_CONFIG,&config);
-//	lt_motor_control(y_stepper,STEPPER_CTRL_CONFIG,&config);
-//	/* config two steppers successfully */
-//	sem_test = rt_sem_create("sem_test",0,RT_IPC_FLAG_PRIO);		/* create semaphore! */
-//	if(sem_test == RT_NULL) return;
-//	
-//	stepper_thread = rt_thread_create("stepper",stepper_thread_entry,RT_NULL,2048,10,20);
-//	
-//	if(stepper_thread != RT_NULL)
-//	{
-//		rt_thread_startup(stepper_thread);
-//	}
-//}
 
 /****************************************************************************************/
 #ifdef LT_USING_MOTOR_MSH_TEST
@@ -1019,7 +865,7 @@ void test_bldc_torque(lt_motor_t motor,float input)
 void test_bldc_elec_info(lt_motor_t motor)
 {
 	if(motor == RT_NULL) return;
-	static struct lt_bldc_elec_info info;
+	static struct lt_bldc_info info;
 	rt_err_t res = lt_motor_control(motor,BLDC_CTRL_GET_ELECTRIC_INFO,&info);
 	
 	if(res == RT_EOK)
@@ -1032,6 +878,169 @@ void test_bldc_elec_info(lt_motor_t motor)
 	}
 }
 /****************************************************************************************/
+///* provided examples*/
+
+//rt_align(RT_ALIGN_SIZE)
+
+///* example 1 : stepper moves periodically and trapzoid acceleration */
+//static rt_sem_t sem_ex_1;
+//static rt_thread_t thread_ex_1;
+//static lt_motor_t motor_ex_1;
+
+//rt_err_t test_example_1_callback(void* parameter)
+//{
+//	return rt_sem_release(sem_ex_1);					/* when motor finish a output, release this semaphore */
+//}
+
+//static void test_example_1_thread_entry(void* parameter)
+//{
+//	rt_err_t res;
+//	rt_uint32_t count = 0;
+//	rt_uint8_t i;
+//	float input;
+//	
+//	for(i = 0; i < 6; i++)
+//	{
+//		if (i % 2 == 0)
+//		{
+//			test_stepper_trapzoid(motor_ex_1,-1000,0.1,0.1,200);
+//		}
+//		else
+//		{
+//			test_stepper_trapzoid(motor_ex_1,1000,0.1,0.1,200);
+//		}
+//		res = rt_sem_take(sem_ex_1,RT_WAITING_FOREVER);	/* if the motor doesn't finish a output, suspend the thread */
+//		if(res != RT_EOK) 
+//		{
+//			rt_kprintf("Error!!! \n");
+//			break;
+//		}
+//		rt_thread_mdelay(3000);							/* delay 3s before */
+//	}
+//	
+//	
+//	while(1)
+//	{
+//		count++;
+//		if(count % 2 == 0)							/* reversal rotation */
+//		{
+//			input = -2000;
+//		}
+//		else										/* forward rotation */
+//		{
+//			input = 2000;
+//		}
+//		rt_thread_mdelay(2000);						/* delay 2s before motor move */
+//		lt_motor_control(motor_ex_1,MOTOR_CTRL_OUTPUT_ANGLE,&input);
+//		
+//		res = rt_sem_take(sem_ex_1,RT_WAITING_FOREVER);	/* if the motor doesn't finish a output, suspend the thread */
+//		if(res != RT_EOK) 
+//		{
+//			rt_kprintf("Error!!! \n");
+//			break;
+//		}
+//	}
+//}
+
+//rt_err_t test_example_1_config(void)
+//{
+//	motor_ex_1 = lt_manager_get_motor("y_stepper");
+//	if(motor_ex_1 == RT_NULL) return RT_ERROR;
+//	lt_motor_set_callback(motor_ex_1,test_example_1_callback,RT_NULL);
+//	
+//	sem_ex_1 = rt_sem_create("ex1_sem",0,RT_IPC_FLAG_PRIO);
+//	thread_ex_1 = rt_thread_create("ex1_thread",test_example_1_thread_entry,RT_NULL,1024,15,20);
+//	if(sem_ex_1 == RT_NULL || thread_ex_1 == RT_NULL) return RT_ERROR;
+//	rt_thread_startup(thread_ex_1);
+//	
+//	return RT_EOK;
+//}
+
+///* example 2 : stepper interpolation */
+//static rt_sem_t sem_ex_2;				/* semaphore for test */
+//static rt_thread_t thread_ex_2;			/* stepper thread */
+//static lt_motor_t motor_ex_x;
+//static lt_motor_t motor_ex_y;
+///* when finish output, this function would be called */
+//rt_err_t test_example_2_callback(void *parameter)
+//{
+//	return rt_sem_release(sem_ex_2);
+//}
+
+//static void test_example_2_thread_entry(void *parameter)
+//{
+//	rt_uint8_t i;
+//	float output = 360, res;
+//	for (i = 0; i < 5; i++)			/* 5 forward rotations */
+//	{
+//		lt_motor_control(motor_ex_x,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+//		lt_motor_control(motor_ex_x,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+//		rt_sem_take(sem_ex_2,RT_WAITING_FOREVER);				/* waiting output finish */
+//		rt_thread_mdelay(500);									/* delay */
+//	}
+//	output = -360;
+//	for (i = 0; i < 5; i++)			/* 5 reversal rotations */
+//	{
+//		lt_motor_control(motor_ex_x,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+//		lt_motor_control(motor_ex_y,STEPPER_CTRL_OUTPUT_ANGLE,&output);
+//		rt_sem_take(sem_ex_2,RT_WAITING_FOREVER);				/* waiting output finish */
+//		rt_thread_mdelay(500);									/* delay */
+//	}
+//	
+//	/* line interpolation path: /\ -->  ---
+//								\/     |   |
+//										---	
+//	*/
+//	rt_int32_t line_path[8][2] = {{500,800},{500,-800},{-500,-800},{-500,800},
+//								  {0,1000},{1000,0},{0,-1000},{-1000,0}};
+//	rt_int32_t circular_path[9][2] = {{707,0},{500,500},{0,707},{-500,500},{-707,0},{-500,-500},{0,-707},{500,-500},{0,707}};
+//	/* draw a circle with radius = 707 steps */
+//	/* line interp test */							  
+//	for(i = 0; i < 8; i++)
+//	{
+//		test_stepper_line_interp(motor_ex_x,motor_ex_y,0,0,line_path[i][0],line_path[i][1]);
+//		rt_sem_take(sem_ex_2,RT_WAITING_FOREVER);				/* waiting output finish */
+//		rt_thread_mdelay(1000);									
+//	}
+//	/* circular interp test */
+//	/* in this case, the circular should lie in one quadrant and interp direction should be reasonable 
+//	*  eg: start:(50, 50), end:(71,0), direction should be CW since intep circular lies in 1th quadrant
+//	*/
+//	for(i = 0; i < 8; i++)
+//	{
+//		test_stepper_circular_interp(motor_ex_x,motor_ex_y,circular_path[i][0],circular_path[i][1],circular_path[i+1][0],circular_path[i+1][1],707,DIR_CCW);
+//		rt_sem_take(sem_ex_2,RT_WAITING_FOREVER);				/* waiting output finish */
+//		rt_thread_mdelay(1000);									
+//	}
+//	/* clock-wise */
+//	for(i = 8; i > 1; i++)
+//	{
+//		test_stepper_circular_interp(motor_ex_x,motor_ex_y,circular_path[i][0],circular_path[i][1],circular_path[i+1][0],circular_path[i+1][1],707,DIR_CW);
+//		rt_sem_take(sem_ex_2,RT_WAITING_FOREVER);				/* waiting output finish */
+//		rt_thread_mdelay(1000);									
+//	}
+//	
+//}
+
+//rt_err_t test_example_2_config(void)
+//{
+//	motor_ex_x = lt_manager_get_motor("x_stepper");
+//	motor_ex_y = lt_manager_get_motor("y_stepper");
+//	if(motor_ex_x == RT_NULL || motor_ex_y) return RT_ERROR;
+//	lt_motor_set_callback(motor_ex_x,test_example_2_callback,RT_NULL);
+//	
+//	sem_ex_2 = rt_sem_create("ex2_sem",0,RT_IPC_FLAG_PRIO);
+//	thread_ex_2 = rt_thread_create("ex2_thread",test_example_2_thread_entry,RT_NULL,1024,15,20);
+//	if(sem_ex_2 == RT_NULL || thread_ex_2 == RT_NULL) return RT_ERROR;
+//	rt_thread_startup(thread_ex_2);
+//	
+//	return RT_EOK;
+//}
+
+///* example 3 : one motor follows another */
+
+
+
 #endif
 
 

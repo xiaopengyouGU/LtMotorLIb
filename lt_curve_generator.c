@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #include "ltmotorlib.h"
 #include "math.h"
 /* in many case, acceleration part and deceleration part are symmetric, so we don't need to create a full velocity table */

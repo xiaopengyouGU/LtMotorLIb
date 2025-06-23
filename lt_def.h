@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Change Logs:
+ * Date           Author       Notes
+ * 2025-6-21      Lvtou        the first version
+ */
 #ifndef __LT_DEF_H__
 #define __LT_DEF_H__
 
@@ -7,20 +13,21 @@
 #define LT_NAME_MAX					RT_NAME_MAX + 2
 
 #define LT_USING_MOTOR_MSH_TEST
-//#define TEST_PID_POS
-#define TEST_PID_CURR
+//#define COMMUNICATOR_TYPE_OSCILLOSCOPE	
 
+//#define TEST_PID_POS
+//#define TEST_PID_CURR
 #define TEST_PID_TIMER_TYPE			TIMER_TYPE_HW
 //#define TEST_PID_CALLBACK			test_pid_simple
-//#define TEST_PID_CALLBACK			test_velocity_loop
+#define TEST_PID_CALLBACK			test_velocity_loop
 //#define TEST_PID_CALLBACK			test_position_loop
-#define TEST_PID_CALLBACK			test_current_loop
+//#define TEST_PID_CALLBACK			test_current_loop
 //#define TEST_PID_CALLBACK			test_position_velocity_loop
 //#define TEST_PID_CALLBACK			test_velocity_current_loop
 //#define TEST_PID_CALLBACK			test_position_current_loop
 //#define TEST_PID_CALLBACK			test_position_velocity_current_loop
 
-#define	TEST_PID_COMMUT_TIMES		20		/* for high speed sample, sample 10 times then send data upper computer */
+#define	TEST_PID_COMMUT_TIMES		1		/* for high speed sample, sample 10 times then send data to the upper computer */
 
 #define PI							3.1415926
 #define PID_INTEGRAL_LIMIT			6000
@@ -28,9 +35,8 @@
 #define PID_POS_CONST				0.15f
 #define PID_VEL_CONST				0.15f
 #define PID_CURR_CONST				0.15f
-
-//#define COMMUNICATOR_TYPE_OSCILLOSCOPE				
-#define COMMUNICATOR_DEV_NAME	"uart1"
+		
+#define COMMUNICATOR_DEV_NAME	"uart1"//"dac1"	
 
 #define ENCODER_NAME_1			"pulse1"
 #define ENCODER_NAME_2  		"pulse4"	
@@ -82,7 +88,6 @@
 #define BLDC_PERIOD					2000
 #define BLDC_OUTPUT_PERIOD			100			/* 100ms, unit: us, 10kHz */
 #define BLDC_CURRENT_LIMIT			3.3/2		/* max current, unit: A */
-//#define BLDC_MIN_SPEED			0.01		/* BLDC motor minimum speed, dead region */
 	
 
 
