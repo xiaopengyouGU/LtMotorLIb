@@ -1,0 +1,13 @@
+[t,freq,T_nums] = lt_trapzoid(1000,0.2,0.2,200);
+%[t,freq,T_nums] = lt_s_curve(1000,200,200,20,50,5);
+%[t,freq,T_nums] = lt_5_section(1000,2000,0,100);
+subplot(1,2,1);
+plot(t,freq);
+title("freq-t curve");
+xlabel("time [s]");
+ylabel("frequency [Hz]");
+subplot(1,2,2);
+plot(t,T_nums);
+title("period-t curve");
+xlabel("time [s]");
+ylabel("period [us]");
